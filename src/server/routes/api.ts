@@ -1,9 +1,11 @@
 import { Hono } from 'hono';
 import { context, redis, reddit } from '@devvit/web/server';
+import games from '../../../src/shared/anand_games.json';
 import type {
   DecrementResponse,
-  IncrementResponse,
+  GameData,
   InitResponse,
+  IncrementResponse,
 } from '../../shared/api';
 
 type ErrorResponse = {
@@ -15,6 +17,7 @@ export const api = new Hono();
 
 api.get('/init', async (c) => {
   const { postId } = context;
+  await redis.set('shadowchess_anand_games', JSON.stringify(games));
 
   if (!postId) {
     console.error('API Init Error: postId not found in devvit context');
@@ -28,16 +31,20 @@ api.get('/init', async (c) => {
   }
 
   try {
-    const [count, username] = await Promise.all([
+    const [count, username, gameDataJson] = await Promise.all([
       redis.get('count'),
       reddit.getCurrentUsername(),
+      redis.get(`game_${postId}`),
     ]);
+
+    const gameData = gameDataJson ? (JSON.parse(gameDataJson) as GameData) : null;
 
     return c.json<InitResponse>({
       type: 'init',
       postId: postId,
       count: count ? parseInt(count) : 0,
       username: username ?? 'anonymous',
+      gameData,
     });
   } catch (error) {
     console.error(`API Init Error for post ${postId}:`, error);

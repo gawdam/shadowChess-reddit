@@ -22,7 +22,7 @@ export function pieceSide(piece: Piece): Side | null {
   return piece.startsWith('white_') ? 'w' : 'b';
 }
 
-export function generateRandomBoard(seed: string): Piece[] {
+export function generateRandomBoard(): Piece[] {
   // Standard chess starting position.
   // Replace this later if you want randomized boards.
   return [

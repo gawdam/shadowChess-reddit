@@ -147,14 +147,6 @@ const Chessboard = () => {
       border: color === '#fff' ? '1px solid #aaa' : '1px solid #333',
     });
 
-    const footerStyle: React.CSSProperties = {
-      position: 'absolute',
-      left: 16,
-      bottom: 16,
-      color: '#5d544b',
-      fontSize: 12,
-      letterSpacing: '0.03em',
-    };
 
     // initialize board from getInitialPiece
     const initialBoard = Array.from({ length: 64 }).map((_, i) =>
@@ -257,7 +249,7 @@ const Chessboard = () => {
           const r = r0 + dr, c = c0 + dc;
           if (!inBounds(r, c)) continue;
           const t = boardState[idx(r, c)];
-          if (!t || (color === 'w' ? t.startsWith('black_') : t.startsWith('white_'))) moves.push(idx(r, c));
+          if (!t) moves.push(idx(r, c));
         }
       }
       if (kind === 'king') {
@@ -266,7 +258,7 @@ const Chessboard = () => {
           const r = r0+dr, c = c0+dc;
           if (!inBounds(r,c)) continue;
           const t = boardState[idx(r,c)];
-          if (!t || (color === 'w' ? t.startsWith('black_') : t.startsWith('white_'))) moves.push(idx(r,c));
+          if (!t) moves.push(idx(r,c));
         }
       }
       if (kind === 'pawn') {
@@ -289,63 +281,6 @@ const Chessboard = () => {
       }
 
       return moves;
-    };
-
-    // --- FEN utilities and game loading ---
-    type FenRaw =
-      | string
-      | { fen?: string; white?: string; black?: string; year?: string; event?: string }
-      | { final_fen?: string; white?: string; black?: string; date?: string; site?: string; round?: string; white_elo?: string; black_elo?: string; eco?: string; result?: string };
-
-    type FenEntry = {
-      fen: string;
-      meta: {
-        white?: string;
-        black?: string;
-        year?: string;
-        event?: string;
-        date?: string;
-        site?: string;
-        round?: string;
-        white_elo?: string;
-        black_elo?: string;
-        eco?: string;
-        result?: string;
-      };
-    };
-
-    const fetchFenList = async (): Promise<FenEntry[]> => {
-      try {
-        const res = await fetch('/Games/anand_games.json');
-        if (!res.ok) return [];
-        const data: FenRaw[] = await res.json();
-        return data.map((it) => {
-          if (typeof it === 'string') return { fen: it, meta: {} } as FenEntry;
-          // support objects with either `fen` or `final_fen` and a variety of metadata keys
-          const fenStr = (it as any).fen ?? (it as any).final_fen ?? '';
-          const meta: any = {};
-          if ((it as any).white) meta.white = (it as any).white;
-          if ((it as any).black) meta.black = (it as any).black;
-          if ((it as any).year) meta.year = (it as any).year;
-          if ((it as any).event) meta.event = (it as any).event;
-          if ((it as any).date) meta.date = (it as any).date;
-          if ((it as any).site) meta.site = (it as any).site;
-          if ((it as any).round) meta.round = (it as any).round;
-          if ((it as any).white_elo) meta.white_elo = (it as any).white_elo;
-          if ((it as any).black_elo) meta.black_elo = (it as any).black_elo;
-          if ((it as any).eco) meta.eco = (it as any).eco;
-          if ((it as any).result) meta.result = (it as any).result;
-          return { fen: fenStr, meta } as FenEntry;
-        }) as FenEntry[];
-      } catch (e) {
-        console.error('failed to load FEN list', e);
-        return [];
-      }
-    };
-
-    const pickRandomFen = (list: FenEntry[]) => {
-      if (!list || list.length === 0) return null;
-      return list[Math.floor(Math.random() * list.length)];
     };
 
     // parse only the placement + active color fields we need
@@ -374,8 +309,6 @@ const Chessboard = () => {
       return { board: boardArr, turn: active === 'b' ? 'b' : 'w' };
     };
 
-    // state for fen list and metadata
-    const [fenList, setFenList] = useState<FenEntry[] | null>(null);
     const [gameMeta, setGameMeta] = useState<{
       white?: string;
       black?: string;
@@ -410,15 +343,20 @@ const Chessboard = () => {
     const titleKing = gameMeta?.turn === 'b' ? '♚' : '♔';
     const titleText = `${titleKing} ${gameTitle} ${titleKing}`;
 
-    const { username } = useCounter();
+    const { username, gameData } = useCounter();
 
     React.useEffect(() => {
-      // load fen list once
-      void (async () => {
-        const list = await fetchFenList();
-        setFenList(list);
-      })();
-    }, []);
+      if (!gameData) return;
+      const parsed = parseFEN(gameData.fen);
+      setBoard(parsed.board);
+      setSelected(null);
+      setDragging(null);
+      setGhost(null);
+      setTargetIndex(null);
+      setCapturedByWhite([]);
+      setCapturedByBlack([]);
+      setGameMeta({ ...gameData.meta, turn: gameData.turn });
+    }, [gameData]);
 
     // update legal moves when selection or board changes
     React.useEffect(() => {
@@ -435,25 +373,6 @@ const Chessboard = () => {
       if (gameMeta?.turn === 'b') return piece.startsWith('black_');
       if (gameMeta?.turn === 'w') return piece.startsWith('white_');
       return false;
-    };
-
-    const applyFenEntry = (entry: FenEntry | null) => {
-      if (!entry) return;
-      const parsed = parseFEN(entry.fen);
-      setBoard(parsed.board);
-      setSelected(null);
-      setDragging(null);
-      setGhost(null);
-      setTargetIndex(null);
-      setCapturedByWhite([]);
-      setCapturedByBlack([]);
-      setGameMeta({ ...entry.meta, turn: parsed.turn ?? undefined } as any);
-    };
-
-    const loadRandomGame = () => {
-      if (!fenList || fenList.length === 0) return;
-      const pick = pickRandomFen(fenList);
-      if (pick) applyFenEntry(pick);
     };
 
     const onSquareClick = (idx: number) => {
@@ -737,10 +656,6 @@ const Chessboard = () => {
         onTouchMove={onTouchMove}
         onTouchEnd={onTouchEnd}
       >
-        <div style={{ position: 'absolute', top: 12, left: 12, zIndex: 999 }}>
-          <button onClick={loadRandomGame} style={{ padding: '6px 10px', borderRadius: 8, border: 'none', cursor: 'pointer', background: '#22262f', color: '#f5f5f5' }}>Load random game</button>
-        </div>
-
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10, width: '100%' }}>
           <div style={playerInfoStyle}>
             <div style={headerStyle}>{titleText}</div>

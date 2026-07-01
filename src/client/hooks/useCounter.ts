@@ -8,6 +8,7 @@ import type {
 interface CounterState {
   count: number;
   username: string | null;
+  gameData: InitResponse['gameData'];
   loading: boolean;
 }
 
@@ -15,6 +16,7 @@ export const useCounter = () => {
   const [state, setState] = useState<CounterState>({
     count: 0,
     username: null,
+    gameData: null,
     loading: true,
   });
   const [postId, setPostId] = useState<string | null>(null);
@@ -30,6 +32,7 @@ export const useCounter = () => {
         setState({
           count: data.count,
           username: data.username,
+          gameData: data.gameData ?? null,
           loading: false,
         });
         setPostId(data.postId);
