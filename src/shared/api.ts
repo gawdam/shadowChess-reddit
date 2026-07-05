@@ -11,7 +11,14 @@ export type InitResponse = {
   count: number;
   username: string;
   gameData: GameData | null;
+  userSide: 'white' | 'black' | null;
+  playerCounts: {
+    white: number;
+    black: number;
+  };
 };
+
+
 
 export type IncrementResponse = {
   type: 'increment';
@@ -23,4 +30,18 @@ export type DecrementResponse = {
   type: 'decrement';
   postId: string;
   count: number;
+};
+
+export type SetSideResponse = {
+  status: 'success';
+  postId: string;
+  username: string;
+  side: 'white' | 'black';
+};
+
+export type SubmitMovesResponse = {
+  status: 'success';
+  postId: string;
+  username: string;
+  moves: string[];
 };

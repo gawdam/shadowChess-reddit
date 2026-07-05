@@ -5,6 +5,7 @@ import { createRoot } from 'react-dom/client';
 import { useCounter } from './hooks/useCounter';
 
 
+
 const Chessboard = () => {
   // responsive square size for mobile
   const [square, setSquare] = useState<number>(() => {
@@ -37,22 +38,7 @@ const Chessboard = () => {
       return null;
     };
 
-    const squareStyle: React.CSSProperties = {
-      width: square,
-      height: square,
-      display: 'flex',
-      justifyContent: 'center',
-      alignItems: 'center',
-    };
 
-    const pieceImgStyle: React.CSSProperties = {
-      width: '96%',
-      height: '96%',
-      objectFit: 'contain',
-      pointerEvents: 'auto',
-      touchAction: 'none',
-      transformOrigin: 'center center',
-    };
 
     const appStyle: React.CSSProperties = {
       display: 'flex',
@@ -67,77 +53,6 @@ const Chessboard = () => {
       position: 'relative',
     };
 
-    const headerStyle: React.CSSProperties = {
-      textAlign: 'center',
-      fontSize: 34,
-      fontWeight: 700,
-      letterSpacing: '0.18em',
-      color: '#000000',
-      textShadow: 'none',
-      fontFamily: '"MADE Cannes", "Fira Code", Consolas, Menlo, Monaco, monospace',
-      marginBottom: 6,
-    };
-
-    const subtitleStyle: React.CSSProperties = {
-      textAlign: 'center',
-      fontSize: 15,
-      fontWeight: 500,
-      letterSpacing: '0.08em',
-      color: '#4d453d',
-      marginBottom: 4,
-    };
-
-    const playerInfoStyle: React.CSSProperties = {
-      display: 'flex',
-      flexDirection: 'column',
-      alignItems: 'center',
-      gap: 10,
-      width: '100%',
-      maxWidth: 480,
-      textAlign: 'center',
-    };
-
-    const usernamePanelStyle: React.CSSProperties = {
-      display: 'flex',
-      flexDirection: 'column',
-      alignItems: 'center',
-      gap: 10,
-      width: '100%',
-      padding: '12px 14px',
-      borderRadius: 16,
-      background: '#fff8f0',
-      border: '1px solid rgba(0,0,0,0.06)',
-      boxShadow: '0 0 16px rgba(0,0,0,0.05)',
-      marginTop: 12,
-    };
-
-    const usernameRowStyle: React.CSSProperties = {
-      display: 'flex',
-      alignItems: 'center',
-      gap: 10,
-      color: '#111111',
-      fontSize: 14,
-      fontWeight: 600,
-    };
-
-    const captureRowStyle: React.CSSProperties = {
-      display: 'flex',
-      alignItems: 'center',
-      gap: 8,
-      flexWrap: 'wrap',
-      justifyContent: 'center',
-      fontSize: 12,
-      color: '#000000',
-    };
-
-    const playerRowStyle: React.CSSProperties = {
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'center',
-      gap: 10,
-      color: '#000000',
-      fontSize: 14,
-    };
 
     const badgeStyle = (color: string): React.CSSProperties => ({
       width: 12,
@@ -161,6 +76,24 @@ const Chessboard = () => {
     const [targetIndex, setTargetIndex] = useState<number | null>(null);
     const [capturedByWhite, setCapturedByWhite] = useState<string[]>([]);
     const [capturedByBlack, setCapturedByBlack] = useState<string[]>([]);
+    const [moves, setMoves] = useState<{ notation: string; color: 'w' | 'b' }[]>([]);
+    const handleOnClick = async () => {
+      const notations = moves.map(m => m.notation);
+      
+      if (notations.length !== 5) {
+        alert(`Please finish your moves first (${notations.length}/5)`);
+        return;
+      }
+
+      const success = await submitMoves(notations);
+      if (success) {
+        // Optional: add UI reset logic here (e.g., clear client board moves)
+      }
+    };
+        // Side Selection & Count Tracking
+
+
+
     const touchFromRef = useRef<number | null>(null);
     const touchLastTargetRef = useRef<number | null>(null);
     const touchTapStartRef = useRef<{ idx: number; x: number; y: number; t: number } | null>(null);
@@ -169,6 +102,7 @@ const Chessboard = () => {
     const moveAudioRef = useRef<HTMLAudioElement>(new Audio('/sounds/move-self.mp3'));
     const captureAudioRef = useRef<HTMLAudioElement>(new Audio('/sounds/capture.mp3'));
 
+    
     const handleMove = (from: number, to: number) => {
       if (from === to) return;
       const piece = board[from];
@@ -183,6 +117,15 @@ const Chessboard = () => {
       newBoard[from] = null;
       setBoard(newBoard);
       setSelected(null);
+
+      // Record move ledger entry
+      const kind = piece.split('_')[1];
+      const pieceColor = piece.startsWith('white_') ? 'w' : 'b';
+      const files = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'];
+      const ranks = ['8', '7', '6', '5', '4', '3', '2', '1'];
+      const toSquare = files![to % 8]! + ranks[Math.floor(to / 8)];
+      const moveNotation = (kind === 'pawn' ? '' : kind === 'knight' ? 'N' : kind![0]!.toUpperCase()) + toSquare;
+      setMoves((prev) => [...prev, { notation: moveNotation, color: pieceColor }]);
 
       try {
         if (destPiece) {
@@ -324,7 +267,13 @@ const Chessboard = () => {
       turn?: string;
     } | null>({ turn: 'w' });
 
-    const boardFlipped = gameMeta?.turn === 'b';
+
+    const gameTitle = `${gameMeta?.white?.split(',')[0] ?? 'White'} vs ${gameMeta?.black?.split(',')[0] ?? 'Black'}`;
+    const gameSubtitle = gameMeta?.event || (gameMeta?.year ? `${gameMeta.year} Chess championship` : 'Chess championship');
+    const titleText = `${gameTitle}`;
+
+    const { username, gameData, selectSide, playerCounts, userSide , submitMoves, submitting } = useCounter();
+
     const boardStyle: React.CSSProperties = {
       border: '4px solid rgba(255,255,255,0.08)',
       boxShadow: '0 0 40px rgba(0,0,0,0.45)',
@@ -335,15 +284,8 @@ const Chessboard = () => {
       boxSizing: 'content-box',
       touchAction: 'none',
       background: '#e6e0d5',
-      transform: boardFlipped ? 'rotate(180deg)' : undefined,
+      transform: userSide === 'black' ? 'rotate(180deg)' : undefined,
     };
-
-    const gameTitle = `${gameMeta?.white ?? 'White'} vs ${gameMeta?.black ?? 'Black'}`;
-    const gameSubtitle = gameMeta?.event || (gameMeta?.year ? `${gameMeta.year} Chess championship` : 'Chess championship');
-    const titleKing = gameMeta?.turn === 'b' ? '♚' : '♔';
-    const titleText = `${titleKing} ${gameTitle} ${titleKing}`;
-
-    const { username, gameData } = useCounter();
 
     React.useEffect(() => {
       if (!gameData) return;
@@ -355,6 +297,7 @@ const Chessboard = () => {
       setTargetIndex(null);
       setCapturedByWhite([]);
       setCapturedByBlack([]);
+      setMoves([]);
       setGameMeta({ ...gameData.meta, turn: gameData.turn });
     }, [gameData]);
 
@@ -370,8 +313,8 @@ const Chessboard = () => {
     // helper: enforce turn-based selection/movement
     const isPieceMovable = (piece?: string | null) => {
       if (!piece) return false;
-      if (gameMeta?.turn === 'b') return piece.startsWith('black_');
-      if (gameMeta?.turn === 'w') return piece.startsWith('white_');
+      if (userSide === 'black') return piece.startsWith('black_');
+      if (userSide === 'white') return piece.startsWith('white_');
       return false;
     };
 
@@ -648,133 +591,379 @@ const Chessboard = () => {
       };
     }, [board, square]);
 
+    const isBlackLeft = gameMeta?.turn === 'b';
+    const leftHeader = isBlackLeft ? 'Black' : 'White';
+    const rightHeader = isBlackLeft ? 'White' : 'Black';
+
+    if (!userSide) {
     return (
-      <div
-        style={appStyle}
-        onMouseDown={onOutsidePointerDown}
-        onTouchStart={onOutsidePointerDown}
-        onTouchMove={onTouchMove}
-        onTouchEnd={onTouchEnd}
-      >
-        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10, width: '100%' }}>
-          <div style={playerInfoStyle}>
-            <div style={headerStyle}>{titleText}</div>
-            <div style={subtitleStyle}>{gameSubtitle}</div>
-            <div style={playerRowStyle}>
-              <div style={badgeStyle('#ffffff')} />
-              <span>White: {gameMeta?.white ?? 'White'}</span>
-            </div>
-            <div style={playerRowStyle}>
-              <div style={badgeStyle('#000000')} />
-              <span>Black: {gameMeta?.black ?? 'Black'}</span>
-            </div>
-            <div style={{ fontSize: 12, color: '#000000' }}>{gameMeta?.turn === 'b' ? 'Black to play' : 'White to play'}</div>
-          </div>
+      <div style={{
+        display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+        minHeight: '100vh', background: '#f4efe4', fontFamily: 'sans-serif', padding: 20
+      }}>
+        <div style={{
+          background: '#fff', padding: '32px', borderRadius: '12px', boxShadow: '0 8px 24px rgba(0,0,0,0.1)',
+          maxWidth: '440px', width: '100%', textAlign: 'center'
+        }}>
+          <h2 style={{ margin: '0 0 8px 0', color: '#262421' }}>Choose Your Side</h2>
+          <p style={{ color: '#706e6b', fontSize: '14px', marginBottom: '24px' }}>Join a faction to play your moves!</p>
+          
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+            <button 
+              onClick={() => { selectSide('white');}}
+              style={{
+                display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                padding: '16px', background: '#ffffff', border: '2px solid #e1e1e1', borderRadius: '8px',
+                cursor: 'pointer', fontSize: '16px', fontWeight: 600, color: '#262421'
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <div style={badgeStyle('#ffffff')} />
+                <span>White ({gameMeta?.white})</span>
+              </div>
+              <span style={{ fontSize: '13px', color: '#706e6b' }}>{playerCounts?.white || 0} Players</span>
+            </button>
 
-          <div ref={boardRef} style={boardStyle} onDragOver={onBoardDragOver} onDrop={onBoardDrop}>
-            {Array.from({ length: 64 }).map((_, i) => {
-              const row = Math.floor(i / 8);
-              const col = i % 8;
-              const isDark = (row + col) % 2 === 1;
-              const bg = isDark ? '#986B41' : '#FFFDD0';
-              const piece = board[i];
-              return (
-                <div
-                  key={i}
-                  onClick={() => onSquareClick(i)}
-                  onTouchStart={(e) => onSquareTouchStart(e, i)}
-                  onDrop={(e) => {
-                    e.preventDefault();
-                    const from = Number(e.dataTransfer.getData('text/plain'));
-                    if (!Number.isNaN(from)) {
-                      const piece = board[from];
-                      if (isPieceMovable(piece)) {
-                        const legal = getLegalMoves(board, from);
-                        if (legal.includes(i)) handleMove(from, i);
-                      }
-                    }
-                    setDragging(null);
-                    setGhost(null);
-                    setGrabCursor(false);
-                    setTargetIndex(null);
-                  }}
-                  data-index={i}
-                  onDragOver={(e) => {
-                    e.preventDefault();
-                    try { e.dataTransfer.dropEffect = 'move'; } catch {}
-                    setTargetIndex(i);
-                  }}
-                  style={{ ...squareStyle, background: bg, cursor: 'pointer', position: 'relative' }}
-                >
-                  {piece && (
-                    <img
-                      src={`/pieces/${piece}.png`}
-                      alt={piece}
-                      draggable
-                      onDragStart={(e: React.DragEvent<HTMLImageElement>) => {
-                        // prevent dragging pieces that aren't allowed to move this turn
-                        if (!isPieceMovable(piece)) {
-                          e.preventDefault();
-                          return;
-                        }
-                        e.dataTransfer.setData('text/plain', String(i));
-                        try { e.dataTransfer.effectAllowed = 'move'; } catch {}
-                        try { const img = new Image(); img.src = 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg"></svg>'; e.dataTransfer.setDragImage(img, 0, 0); } catch {}
-                        setDragging(i);
-                        setGrabCursor(true);
-                        setGhost({ piece, x: e.clientX, y: e.clientY - Math.floor(square * 0.35), scale: 1.15 });
-                        console.debug('onDragStart', { from: i, clientX: e.clientX, clientY: e.clientY });
-                      }}
-                      onDragEnd={() => { setDragging(null); setGhost(null); setGrabCursor(false); setTargetIndex(null); }}
-                      onTouchStart={(e) => onTouchStart(e, i)}
-                      style={{
-                        ...pieceImgStyle,
-                        position: 'relative',
-                        transform: `${(selected === i || dragging === i) ? 'scale(1.15)' : ''}${boardFlipped ? ' rotate(180deg)' : ''}`.trim() || undefined,
-                        transition: 'transform 0.12s ease',
-                        zIndex: (selected === i || dragging === i) ? 2 : 1,
-                        cursor: 'grab',
-                        visibility: dragging === i ? 'hidden' : 'visible',
-                      }}
-                    />
-                  )}
-
-                  {(targetIndex === i || legalMoves.includes(i)) && (
-                    <div style={{ position: 'absolute', left: '50%', top: '50%', transform: 'translate(-50%, -50%)', width: square * 0.6, height: square * 0.6, borderRadius: '50%', background: 'rgba(0,0,0,0.1)', pointerEvents: 'none', zIndex: 2 }} />
-                  )}
-                </div>
-              );
-            })}
+            <button 
+              onClick={() => {selectSide('black');}}
+              style={{
+                display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                padding: '16px', background: '#262421', border: '2px solid #262421', borderRadius: '8px',
+                cursor: 'pointer', fontSize: '16px', fontWeight: 600, color: '#ffffff'
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <div style={badgeStyle('#000000')} />
+                <span>Black ({gameMeta?.black})</span>
+              </div>
+              <span style={{ fontSize: '13px', color: '#bababa' }}>{playerCounts?.black || 0} Players</span>
+            </button>
           </div>
         </div>
-
-        <div style={usernamePanelStyle}>
-          <div style={usernameRowStyle}>
-            <div style={badgeStyle(gameMeta?.turn === 'b' ? '#000000' : '#ffffff')} />
-            <span>u/{username ?? 'anonymous'}</span>
-            <span style={{ color: '#766e63', fontSize: 12 }}>
-              {gameMeta?.turn === 'b' ? 'Black' : 'White'} player
-            </span>
-          </div>
-          <div style={captureRowStyle}>
-            <span style={{ fontWeight: 700, color: '#3e352f' }}>White captured:</span>
-            {capturedByWhite.length > 0 ? capturedByWhite.map((piece, index) => (
-              <img key={`wcap-${index}`} src={`/pieces/${piece}.png`} alt={piece} style={{ width: 20, height: 20 }} />
-            )) : <span style={{ color: '#7f756d' }}>none</span>}
-          </div>
-          <div style={captureRowStyle}>
-            <span style={{ fontWeight: 700, color: '#3e352f' }}>Black captured:</span>
-            {capturedByBlack.length > 0 ? capturedByBlack.map((piece, index) => (
-              <img key={`bcap-${index}`} src={`/pieces/${piece}.png`} alt={piece} style={{ width: 20, height: 20 }} />
-            )) : <span style={{ color: '#7f756d' }}>none</span>}
-          </div>
-        </div>
-
-        {ghost && (
-          <img src={`/pieces/${ghost.piece}.png`} alt={ghost.piece} style={{ position: 'fixed', left: ghost.x, top: ghost.y, pointerEvents: 'none', transform: 'translate(-50%, -60%)', width: square * 0.96 * (ghost.scale ?? 1), height: square * 0.96 * (ghost.scale ?? 1), zIndex: 9999 }} />
-        )}
       </div>
     );
+  }
+
+return (
+  <div
+    style={{
+      ...appStyle,
+      fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif',
+      backgroundColor: '#161512', // Set dark application background
+      color: '#bababa', // Adjusted general text color to light gray
+      padding: '16px',
+      maxWidth: '1000px',
+      margin: '0 auto',
+      display: 'flex',
+      flexDirection: 'column',
+      alignItems: 'center',
+      gap: '16px',
+      boxSizing: 'border-box',
+      width: '100%',
+    }}
+    onMouseDown={onOutsidePointerDown}
+    onTouchStart={onOutsidePointerDown}
+    onTouchMove={onTouchMove}
+    onTouchEnd={onTouchEnd}
+  >
+    {/* ================= HEADER SECTION (STAYS ON TOP) ================= */}
+    <div style={{ textAlign: 'center', width: '100%', marginBottom: '4px' }}>
+      <h1 style={{ fontSize: 'min(6vw, 28px)', fontWeight: 800, letterSpacing: '-0.025em', color: '#fff', margin: '0 0 4px 0' }}>
+        {titleText}
+      </h1>
+      <p style={{ fontSize: 'min(3.5vw, 14px)', color: '#989795', fontWeight: 500, margin: '0 0 12px 0' }}>
+        {gameSubtitle} — <span style={{ color: '#81b64c', fontWeight: 700 }}>{gameMeta?.turn === 'b' ? "Black goes first" : "White goes first"}</span>
+      </p>
+    </div>
+
+    {/* ================= THIN INLINE MOVE LEDGER (TOP OVERLAY) ================= */}
+    <div style={{
+      width: '100%',
+      maxWidth: '1000px',
+      background: '#211f1c',
+      padding: '6px 16px',
+      borderRadius: '6px',
+      fontSize: '13px',
+      display: 'flex',
+      alignItems: 'center',
+      gap: '8px',
+      overflowX: 'auto',
+      whiteSpace: 'nowrap',
+      border: '1px solid rgba(255,255,255,0.05)',
+      boxSizing: 'border-box',
+      color: '#fff'
+    }}>
+      <span style={{ fontSize: '11px', fontWeight: 700, textTransform: 'uppercase', color: '#989795', marginRight: '8px' }}>Moves:</span>
+      
+      {/* If no moves have been played yet, Black starts, and user is White -> display placeholder */}
+      {(gameMeta?.turn === 'b' && userSide === 'white'|| gameMeta?.turn === 'w' && userSide === 'black') && (
+        <span style={{ fontWeight: 800 }}><span style={{ color: '#706e6b' }}>1.</span> <span style={{ color: '#c01812' }}>?</span></span>
+      )}
+
+      {moves.map((m, idx) => {
+
+        return (
+          <div>
+          <span key={idx} style={{ fontWeight: 500, marginRight: '6px' }}>
+            <span style={{ color: '#706e6b' }}>{idx + 1}.</span> {m.notation}
+          </span>
+            {idx!==4 && (gameMeta?.turn === 'b' && userSide === 'white'|| gameMeta?.turn === 'w' && userSide === 'black')  &&(<span key={idx} style={{ fontWeight: 800, marginRight: '6px' }}>
+              <span style={{ color: '#706e6b' }}>{idx + 2}.</span> <span style={{ color: '#c01812' }}>?</span>
+            </span>)}
+            {!(gameMeta?.turn === 'b' && userSide === 'white'|| gameMeta?.turn === 'w' && userSide === 'black')  &&(<span key={idx} style={{ fontWeight: 800, marginRight: '6px' }}>
+            <span style={{ color: '#706e6b' }}>{idx + 1}.</span> <span style={{ color: '#c01812' }}>?</span>
+          </span>)}
+          </div>
+        );
+        
+      })}
+      
+    </div>
+
+    {/* ================= MAIN RESPONSIVE CONTAINER ================= */}
+    <div style={{ 
+      display: 'flex', 
+      flexDirection: 'row', 
+      flexWrap: 'wrap',
+      gap: '16px', 
+      width: '100%', 
+      justifyContent: 'center',
+      alignItems: 'flex-start'
+    }}>
+      
+      {/* LEFT SIDE: BOARDS & PLAYERS */}
+      <div style={{ 
+        flex: '1 1 400px', 
+        maxWidth: '500px', 
+        width: '100%', 
+        display: 'flex', 
+        flexDirection: 'column', 
+        gap: '8px' 
+      }}>
+        
+        {/* BLOCK 1: OPPONENT/TOP PLAYER PANEL */}
+        <div style={{ 
+          display: 'flex', 
+          justifyContent: 'space-between', 
+          alignItems: 'center', 
+          padding: '8px 12px', 
+          background: '#262421', 
+          borderRadius: '6px',
+          border: '1px solid rgba(255,255,255,0.05)',
+          fontSize: '14px',
+          color: '#fff'
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontWeight: 600 }}>
+            <div style={badgeStyle(userSide === 'white' ? '#000000' : '#ffffff')} />
+            <span>ShadowChess GM</span>
+            <span style={{ fontSize: '11px', color: '#989795', fontWeight: 400 }}>
+              ({userSide === 'white' ? 'Black' : 'White'})
+            </span>
+          </div>
+        </div>
+
+        {/* BLOCK 2: RESPONSIVE CHESSBOARD */}
+        <div 
+          ref={boardRef} 
+          style={{
+            ...boardStyle,
+            width: '100%',
+            height: 'auto',
+            aspectRatio: '1 / 1',
+            display: 'grid',
+            gridTemplateColumns: 'repeat(8, 1fr)',
+            gridTemplateRows: 'repeat(8, 1fr)',
+            boxShadow: '0 8px 24px rgba(0,0,0,0.5)',
+            borderRadius: '4px',
+            overflow: 'hidden'
+          }} 
+          onDragOver={onBoardDragOver} 
+          onDrop={onBoardDrop}
+        >
+          {Array.from({ length: 64 }).map((_, i) => {
+            const row = Math.floor(i / 8);
+            const col = i % 8;
+            const isDark = (row + col) % 2 === 1;
+            const bg = isDark ? '#986B41' : '#FFFDD0'; 
+            const piece = board[i];
+            
+            return (
+              <div
+                key={i}
+                onClick={() => onSquareClick(i)}
+                onTouchStart={(e) => onSquareTouchStart(e, i)}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  const from = Number(e.dataTransfer.getData('text/plain'));
+                  if (!Number.isNaN(from)) {
+                    const piece = board[from];
+                    if (isPieceMovable(piece)) {
+                      const legal = getLegalMoves(board, from);
+                      if (legal.includes(i)) handleMove(from, i);
+                    }
+                  }
+                  setDragging(null);
+                  setGhost(null);
+                  setGrabCursor(false);
+                  setTargetIndex(null);
+                }}
+                data-index={i}
+                onDragOver={(e) => {
+                  e.preventDefault();
+                  try { e.dataTransfer.dropEffect = 'move'; } catch {}
+                  setTargetIndex(i);
+                }}
+                style={{ 
+                  background: bg, 
+                  cursor: 'pointer', 
+                  position: 'relative',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  width: '100%',
+                  height: '100%'
+                }}
+              >
+                {piece && (
+                  <img
+                    src={`/pieces/${piece}.png`}
+                    alt={piece}
+                    draggable
+                    onDragStart={(e: React.DragEvent<HTMLImageElement>) => {
+                      if (!isPieceMovable(piece)) {
+                        e.preventDefault();
+                        return;
+                      }
+                      e.dataTransfer.setData('text/plain', String(i));
+                      try { e.dataTransfer.effectAllowed = 'move'; } catch {}
+                      try { const img = new Image(); img.src = 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg"></svg>'; e.dataTransfer.setDragImage(img, 0, 0); } catch {}
+                      setDragging(i);
+                      setGrabCursor(true);
+                      setGhost({ piece, x: e.clientX, y: e.clientY - Math.floor(square * 0.35), scale: 1.15 });
+                    }}
+                    onDragEnd={() => { setDragging(null); setGhost(null); setGrabCursor(false); setTargetIndex(null); }}
+                    onTouchStart={(e) => onTouchStart(e, i)}
+                    style={{
+                      width: '85%',
+                      height: '85%',
+                      objectFit: 'contain',
+                      position: 'relative',
+                      transform: `${(selected === i || dragging === i) ? 'scale(1.12)' : ''}${userSide === 'black' ? ' rotate(180deg)' : ''}`.trim() || undefined,
+                      transition: 'transform 0.12s ease',
+                      zIndex: (selected === i || dragging === i) ? 2 : 1,
+                      cursor: 'grab',
+                      visibility: dragging === i ? 'hidden' : 'visible',
+                    }}
+                  />
+                )}
+
+                {(targetIndex === i || legalMoves.includes(i)) && (
+                  <div style={{ position: 'absolute', left: '50%', top: '50%', transform: 'translate(-50%, -50%)', width: '35%', height: '35%', borderRadius: '50%', background: 'rgba(0,0,0,0.18)', pointerEvents: 'none', zIndex: 2 }} />
+                )}
+              </div>
+            );
+          })}
+        </div>
+
+        {/* BOTTOM PLAYER PANEL (YOUR USER) */}
+        <div style={{ 
+          display: 'flex', 
+          justifyContent: 'space-between', 
+          alignItems: 'center', 
+          padding: '8px 12px', 
+          background: '#262421', 
+          borderRadius: '6px',
+          border: '1px solid rgba(255,255,255,0.05)',
+          fontSize: '14px',
+          color: '#fff'
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontWeight: 600 }}>
+            <div style={badgeStyle(userSide === 'black' ? '#000000' : '#ffffff')} />
+            <span>u/{username ?? 'anonymous'}</span>
+            <span style={{ fontSize: '11px', color: '#989795', fontWeight: 400 }}>
+              ({userSide === 'black' ? 'Black' : 'White'})
+            </span>
+          </div>
+        </div>
+
+      </div>
+
+      {/* RIGHT SIDE / SIDEBAR CONTAINER (BLOCKS 4 & 5) */}
+      <div style={{ 
+        flex: '1 1 280px', 
+        maxWidth: '500px',
+        width: '100%',
+        display: 'flex', 
+        flexDirection: 'column', 
+        gap: '12px',
+        background: '#262421', 
+        padding: '16px', 
+        borderRadius: '8px',
+        boxShadow: '0 6px 18px rgba(0,0,0,0.3)',
+        color: '#bababa',
+        boxSizing: 'border-box',
+        border: '1px solid rgba(255,255,255,0.05)'
+      }}>
+        
+        {/* BLOCK 4: CAPTURED PIECES PANEL */}
+        <div>
+          <div style={{ fontSize: '11px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '6px', color: '#989795' }}>Material Captured</div>
+          
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', background: 'rgba(255,255,255,0.03)', padding: '4px 8px', borderRadius: '4px' }}>
+              <span style={{ fontSize: '11px', fontWeight: 600, minWidth: '40px', color: '#fff' }}>White:</span>
+              <div style={{ display: 'flex', gap: '2px', flexWrap: 'wrap' }}>
+                {capturedByWhite.length > 0 ? capturedByWhite.map((piece, index) => (
+                  <img key={`wcap-${index}`} src={`/pieces/${piece}.png`} alt={piece} style={{ width: 16, height: 16 }} />
+                )) : <span style={{ color: '#535250', fontSize: '11px' }}>None</span>}
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', background: 'rgba(255,255,255,0.03)', padding: '4px 8px', borderRadius: '4px' }}>
+              <span style={{ fontSize: '11px', fontWeight: 600, minWidth: '40px', color: '#fff' }}>Black:</span>
+              <div style={{ display: 'flex', gap: '2px', flexWrap: 'wrap' }}>
+                {capturedByBlack.length > 0 ? capturedByBlack.map((piece, index) => (
+                  <img key={`bcap-${index}`} src={`/pieces/${piece}.png`} alt={piece} style={{ width: 16, height: 16 }} />
+                )) : <span style={{ color: '#535250', fontSize: '11px' }}>None</span>}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* BLOCK 5: ACTIONS / SUBMIT BUTTON */}
+        <button 
+          onClick={handleOnClick}
+          disabled={submitting || moves.length !== 5}
+          style={{
+            marginTop: '4px',
+            background: moves.length === 5 ? '#81b64c' : '#535250', // Gray out if not exactly 5 moves
+            color: '#fff',
+            border: 'none',
+            padding: '10px 14px',
+            borderRadius: '4px',
+            fontSize: '14px',
+            fontWeight: 700,
+            cursor: moves.length === 5 && !submitting ? 'pointer' : 'not-allowed',
+            boxShadow: moves.length === 5 ? '0 3px 0 #5b8433' : '0 3px 0 #3a3937',
+            opacity: submitting ? 0.7 : 1,
+            transition: 'all 0.1s ease',
+            textAlign: 'center',
+            width: '100%'
+          }}
+        >
+          {submitting ? 'Submitting...' : `Submit Moves (${moves.length}/5)`}
+        </button>
+
+      </div>
+    </div>
+
+    {/* GHOST DRAG ELEMENT */}
+    {ghost && (
+      <img src={`/pieces/${ghost.piece}.png`} alt={ghost.piece} style={{ position: 'fixed', left: ghost.x, top: ghost.y, pointerEvents: 'none', transform: 'translate(-50%, -60%)', width: square * 0.96 * (ghost.scale ?? 1), height: square * 0.96 * (ghost.scale ?? 1), zIndex: 9999 }} />
+    )}
+  </div>
+);
+    
 };
 
 createRoot(document.getElementById('root')!).render(
