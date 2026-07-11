@@ -13,10 +13,18 @@ type ReplayMove = {
   color: PieceColor;
 };
 
+type ReplayCaptureInfo = {
+  piece: string;
+  value: number;
+  by: PieceColor;
+};
+
 type ReplayPosition = {
   board: (string | null)[];
   moves: Array<StoredMove & { color: PieceColor }>;
   score: number;
+  captureByWhite: ReplayCaptureInfo | null;
+  captureByBlack: ReplayCaptureInfo | null;
 };
 
 type ParsedReplayMove = {
@@ -29,6 +37,10 @@ type AppliedReplayMove = {
   board: (string | null)[];
   captured: string | null;
   move: StoredMove;
+};
+
+type ReplayMoveFailure = {
+  reason: 'captured piece moved' | 'illegal move';
 };
 
 
@@ -109,7 +121,6 @@ const Chessboard = () => {
     // Post-Game Replay Engine States
     const [activeReplay, setActiveReplay] = useState<MatchRecord | null>(null);
 
-    const [replayTimeline, setReplayTimeline] = useState<ReplayMove[]>([]);
     const [replayPositions, setReplayPositions] = useState<ReplayPosition[]>([]);
     const [currentPly, setCurrentPly] = useState<number>(-1); // -1 means initial puzzle state
     const [liveReplayScore, setLiveReplayScore] = useState<number>(0);
@@ -207,6 +218,8 @@ const Chessboard = () => {
 
     const getPieceColor = (piece: string): PieceColor => piece.startsWith('white_') ? 'w' : 'b';
 
+    const headerFontFamily = '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif';
+
     const getPieceKind = (piece: string): PieceKind | null => {
       const kind = piece.split('_')[1] ?? '';
       return isPieceKind(kind) ? kind : null;
@@ -293,7 +306,7 @@ const Chessboard = () => {
       color: PieceColor,
       move: MoveInput,
       isVariantGame: boolean = true // Add a flag to allow variant rules
-    ): AppliedReplayMove | null => {
+    ): AppliedReplayMove | ReplayMoveFailure | null => {
       const notation = getMoveNotation(move);
       const colorName = color === 'w' ? 'white' : 'black';
 
@@ -304,7 +317,9 @@ const Chessboard = () => {
       // --- STEP 1: RESOLVE COORDINATES ---
       if (isStoredMove(move)) {
         if (move.pieceFrom < 0 || move.pieceFrom > 63 || move.pieceTo < 0 || move.pieceTo > 63 || move.pieceFrom === move.pieceTo) {
-          return null;
+          return {
+            reason: 'illegal move',
+          };
         }
         from = move.pieceFrom;
         to = move.pieceTo;
@@ -326,12 +341,27 @@ const Chessboard = () => {
           return isLegalPieceMove(boardState, index, to) || isVariantGame;
         });
 
-        if (from === -1) return null;
+        if (from === -1) {
+          const matchingPieceExists = boardState.some((piece) => piece === `${colorName}_${parsedMove.kind}`);
+          return {
+            reason: matchingPieceExists ? 'illegal move' : 'captured piece moved',
+          };
+        }
       }
 
       // --- STEP 2: PIECE & LEGALITY CHECK ---
       const movingPiece = boardState[from];
-      if (!movingPiece || !movingPiece.startsWith(`${colorName}_`)) return null;
+      if (!movingPiece) {
+        return {
+          reason: 'captured piece moved',
+        };
+      }
+
+      if (!movingPiece.startsWith(`${colorName}_`)) {
+        return {
+          reason: 'illegal move',
+        };
+      }
 
       const targetPiece = boardState[to];
       const isSelfCapture = targetPiece?.startsWith(`${colorName}_`);
@@ -342,7 +372,11 @@ const Chessboard = () => {
         // (e.g., ensuring a Rook moves in straight lines even if hitting its own piece)
       } else {
         // Standard rule path
-        if (!isLegalPieceMove(boardState, from, to)) return null;
+        if (!isLegalPieceMove(boardState, from, to)) {
+          return {
+            reason: 'illegal move',
+          };
+        }
       }
 
       // --- STEP 3: EXECUTE MOVE ---
@@ -374,6 +408,11 @@ const Chessboard = () => {
       }
 
       return color === 'w' ? swing : -swing;
+    };
+
+    const getCapturedPieceValue = (captured: string | null) => {
+      const capturedKind = captured?.split('_')[1] ?? '';
+      return isPieceKind(capturedKind) ? pieceValues[capturedKind] : 0;
     };
 
     const buildReplayTimeline = (match: MatchRecord, startingTurn: PieceColor): ReplayMove[] => {
@@ -409,17 +448,26 @@ const Chessboard = () => {
         board: replayBoard,
         moves: [],
         score: 0,
+        captureByWhite: null,
+        captureByBlack: null,
       }];
       let runningWhiteAdvantage = 0;
       const appliedMoves: Array<StoredMove & { color: PieceColor }> = [];
+      let captureByWhite: ReplayCaptureInfo | null = null;
+      let captureByBlack: ReplayCaptureInfo | null = null;
 
       for (const replayMove of timeline) {
         const appliedMove = applyReplayMove(replayBoard, replayMove.color, replayMove.move, true); // Enable variant rules for self-capture
 
-        if (!appliedMove) {
+        if (!appliedMove || 'reason' in appliedMove) {
+          const failureReason = appliedMove && 'reason' in appliedMove
+            ? appliedMove
+            : {
+                reason: 'illegal move' as const,
+              };
           runningWhiteAdvantage += replayMove.color === 'w' ? -15 : 15;
           appliedMoves.push({
-            notation: `${sanitizeSan(getMoveNotation(replayMove.move)) || getMoveNotation(replayMove.move)} (unplayed)`,
+            notation: `${sanitizeSan(getMoveNotation(replayMove.move)) || getMoveNotation(replayMove.move)} (${failureReason.reason})`,
             color: replayMove.color,
             pieceFrom: -1,
             pieceTo: -1,
@@ -428,6 +476,8 @@ const Chessboard = () => {
             board: replayBoard,
             moves: [...appliedMoves],
             score: userData.userSide === 'white' ? runningWhiteAdvantage : -runningWhiteAdvantage,
+            captureByWhite,
+            captureByBlack,
           });
           break;
         }
@@ -435,10 +485,26 @@ const Chessboard = () => {
         replayBoard = appliedMove.board;
         runningWhiteAdvantage += getReplayScoreDelta(replayMove.color, appliedMove.captured, getMoveNotation(replayMove.move));
         appliedMoves.push({ ...appliedMove.move, color: replayMove.color });
+        const capturedValue = getCapturedPieceValue(appliedMove.captured);
+        if (appliedMove.captured && capturedValue > 0) {
+          const captureInfo: ReplayCaptureInfo = {
+            piece: appliedMove.captured,
+            value: capturedValue,
+            by: replayMove.color,
+          };
+          if (replayMove.color === 'w') {
+            captureByWhite = captureInfo;
+          } else {
+            captureByBlack = captureInfo;
+          }
+        }
+
         positions.push({
           board: replayBoard,
           moves: [...appliedMoves],
           score: userData.userSide === 'white' ? runningWhiteAdvantage : -runningWhiteAdvantage,
+          captureByWhite,
+          captureByBlack,
         });
       }
 
@@ -454,7 +520,6 @@ const Chessboard = () => {
 
       const timeline = buildReplayTimeline(match, gameData.turn);
       const positions = buildReplayPositions(gameData.fen, timeline);
-      setReplayTimeline(timeline);
       setReplayPositions(positions);
       setBoard(positions[0]?.board ?? parseFEN(gameData.fen).board);
       setMoves(positions[0]?.moves ?? []);
@@ -572,7 +637,6 @@ const Chessboard = () => {
         for (const [dr, dc] of deltas) {
           const r = r0 + dr, c = c0 + dc;
           if (!inBounds(r, c)) continue;
-          const t = boardState[idx(r, c)];
           moves.push(idx(r, c));
         }
       }
@@ -581,7 +645,6 @@ const Chessboard = () => {
           if (dr===0 && dc===0) continue;
           const r = r0+dr, c = c0+dc;
           if (!inBounds(r,c)) continue;
-          const t = boardState[idx(r,c)];
           moves.push(idx(r,c));
         }
       }
@@ -665,6 +728,7 @@ const Chessboard = () => {
       touchAction: 'none',
       background: '#e6e0d5',
       transform: userData.userSide === 'black' ? 'rotate(180deg)' : undefined,
+      fontFamily: headerFontFamily,
     };
 
     React.useEffect(() => {
@@ -981,6 +1045,50 @@ const Chessboard = () => {
     }, [board, square]);
 
     const isReplayMode = userData.hasSubmitted && activeReplay !== null;
+    const currentReplayPosition = replayPositions[currentPly + 1] ?? null;
+    const maxReplayPly = Math.max(-1, replayPositions.length - 2);
+    const isAtReplayStart = currentPly <= -1;
+    const isAtReplayEnd = currentPly >= maxReplayPly;
+    const userColor: PieceColor = userData.userSide === 'white' ? 'w' : 'b';
+    const opponentColor: PieceColor = userColor === 'w' ? 'b' : 'w';
+    const displayedUserScore = isReplayMode ? liveReplayScore : userData.score;
+    const displayedOpponentScore = isReplayMode ? -liveReplayScore : null;
+
+    const getReplayCaptureForSide = (side: PieceColor) => {
+      if (!currentReplayPosition) return null;
+      return side === 'w' ? currentReplayPosition.captureByWhite : currentReplayPosition.captureByBlack;
+    };
+
+    const renderReplayCaptureBadge = (side: PieceColor) => {
+      if (!isReplayMode) return null;
+      const capture = getReplayCaptureForSide(side);
+      if (!capture) return null;
+
+      return (
+        <span
+          style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: '4px',
+            marginLeft: '8px',
+            background: 'rgba(255,255,255,0.08)',
+            border: '1px solid rgba(255,255,255,0.15)',
+            borderRadius: '999px',
+            padding: '2px 8px',
+            fontSize: '11px',
+            fontWeight: 700,
+            color: '#81b64c',
+          }}
+        >
+          <img
+            src={`/pieces/${capture.piece}.png`}
+            alt={capture.piece}
+            style={{ width: 14, height: 14 }}
+          />
+          <span>+{capture.value}</span>
+        </span>
+      );
+    };
     const showOpponentPlaceholder =
       (gameMeta?.turn === 'b' && userData.userSide === 'white') ||
       (gameMeta?.turn === 'w' && userData.userSide === 'black');
@@ -1197,10 +1305,16 @@ return (
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontWeight: 600 }}>
             <div style={badgeStyle(userData.userSide === 'white' ? '#000000' : '#ffffff')} />
             <span>{isReplayMode ? `u/${activeReplay?.opponent}` : 'ShadowChess GM'}</span>
+            {renderReplayCaptureBadge(opponentColor)}
             <span style={{ fontSize: '11px', color: '#989795', fontWeight: 400 }}>
               ({userData.userSide === 'white' ? 'Black' : 'White'})
             </span>
           </div>
+          {isReplayMode && (
+            <div style={{ fontSize: '12px', fontWeight: 700, color: '#81b64c' }}>
+              {displayedOpponentScore} pts
+            </div>
+          )}
         </div>
 
         {/* BLOCK 2: RESPONSIVE CHESSBOARD */}
@@ -1216,17 +1330,40 @@ return (
             gridTemplateRows: 'repeat(8, 1fr)',
             boxShadow: '0 8px 24px rgba(0,0,0,0.5)',
             borderRadius: '4px',
-            overflow: 'hidden'
+            overflow: 'hidden',
+            position: 'relative'
           }} 
           onDragOver={userData.hasSubmitted ? undefined : onBoardDragOver} 
           onDrop={userData.hasSubmitted ? undefined : onBoardDrop}
         >
+          <div
+            style={{
+              position: 'absolute',
+              inset: 0,
+              pointerEvents: 'none',
+              zIndex: 3,
+              fontFamily: headerFontFamily,
+            }}
+          >
+          </div>
           {Array.from({ length: 64 }).map((_, i) => {
             const row = Math.floor(i / 8);
             const col = i % 8;
             const isDark = (row + col) % 2 === 1;
             const bg = isDark ? '#986B41' : '#FFFDD0'; 
             const piece = board[i];
+            const labelColor = isDark ? 'rgba(244, 239, 228, 0.9)' : 'rgba(34, 32, 29, 0.78)';
+            const isBlackView = userData.userSide === 'black';
+            const showRankLabel = isBlackView ? col === 7 : col === 0;
+            const showFileLabel = isBlackView ? row === 0 : row === 7;
+            const rankLabel = String(isBlackView ? 8 - row : row + 1);
+            const fileLabel = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'][col] ?? '';
+            const rankLabelStyle: React.CSSProperties = isBlackView
+              ? { position: 'absolute', right: 5, bottom: 4, fontSize: '9px', fontWeight: 800, color: labelColor, lineHeight: 1, transform: 'rotate(180deg)' }
+              : { position: 'absolute', top: 4, left: 5, fontSize: '9px', fontWeight: 800, color: labelColor, lineHeight: 1 };
+            const fileLabelStyle: React.CSSProperties = isBlackView
+              ? { position: 'absolute', top: 4, left: 5, fontSize: '9px', fontWeight: 800, color: labelColor, lineHeight: 1, textTransform: 'lowercase', transform: 'rotate(180deg)' }
+              : { position: 'absolute', right: 5, bottom: 4, fontSize: '9px', fontWeight: 800, color: labelColor, lineHeight: 1, textTransform: 'lowercase' };
             
             return (
               <div
@@ -1264,9 +1401,16 @@ return (
                   alignItems: 'center',
                   justifyContent: 'center',
                   width: '100%',
-                  height: '100%'
+                  height: '100%',
+                  fontFamily: headerFontFamily,
                 }}
               >
+                {showRankLabel && (
+                  <span style={rankLabelStyle}>{rankLabel}</span>
+                )}
+                {showFileLabel && (
+                  <span style={fileLabelStyle}>{fileLabel}</span>
+                )}
                 {piece && (
                   <img
                     src={`/pieces/${piece}.png`}
@@ -1323,32 +1467,98 @@ return (
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontWeight: 600 }}>
             <div style={badgeStyle(userData.userSide === 'black' ? '#000000' : '#ffffff')} />
             <span>u/{userData.username ?? 'anonymous'}</span>
+            {renderReplayCaptureBadge(userColor)}
             <span style={{ fontSize: '11px', color: '#989795', fontWeight: 400 }}>
               ({userData.userSide === 'black' ? 'Black' : 'White'})
             </span>
+          </div>
+          <div style={{ fontSize: '12px', fontWeight: 700, color: '#81b64c' }}>
+            {displayedUserScore} pts
           </div>
         </div>
 
         {/* ================= LEFT & RIGHT BUTTON PANEL (UNDER THE BOARD) ================= */}
         {isReplayMode && (
-          <div style={{ display: 'flex', gap: '16px', justifyContent: 'center', width: '100%', margin: '12px 0' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '44px 1fr 44px', alignItems: 'center', width: '100%', margin: '12px 0' }}>
             <button 
-              disabled={currentPly <= -1}
+              type="button"
+              disabled={isAtReplayStart}
               onClick={() => stepTimeline(currentPly - 1)}
-              style={{ padding: '8px 24px', background: '#262421', border: '1px solid #535250', color: '#fff', cursor: currentPly <= -1 ? 'not-allowed' : 'pointer', borderRadius: '4px', opacity: currentPly <= -1 ? 0.5 : 1 }}
+              onTouchEnd={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                if (!isAtReplayStart) stepTimeline(currentPly - 1);
+              }}
+              style={{
+                width: '44px',
+                height: '44px',
+                borderRadius: '8px',
+                border: 'none',
+                background: isAtReplayStart ? 'rgba(129,182,76,0.35)' : 'linear-gradient(135deg, #8fc75a, #70a73f)',
+                color: '#ffffff',
+                cursor: isAtReplayStart ? 'not-allowed' : 'pointer',
+                opacity: isAtReplayStart ? 0.55 : 1,
+                boxShadow: isAtReplayStart ? 'none' : '0 6px 16px rgba(129,182,76,0.35)',
+                fontSize: '18px',
+                fontWeight: 900,
+                display: 'inline-flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                justifySelf: 'start',
+                touchAction: 'manipulation',
+                WebkitTapHighlightColor: 'transparent',
+                userSelect: 'none',
+              }}
             >
-              ◀ Previous Move
+              ◀
             </button>
-            <div style={{ alignSelf: 'center', fontWeight: 'bold', color: '#fff', textAlign: 'center', fontSize: '13px' }}>
-              <div>{currentPly === -1 ? "Initial Position" : `Half-Move ${currentPly + 1} / ${replayTimeline.length}`}</div>
-              <div style={{ color: '#81b64c', marginTop: '2px' }}>Match Gain: {liveReplayScore} pts</div>
+            <div style={{
+              minWidth: '130px',
+              textAlign: 'center',
+              fontSize: '12px',
+              fontWeight: 700,
+              color: '#d9d8d6',
+              letterSpacing: '0.04em',
+              textTransform: 'uppercase',
+              background: 'rgba(255,255,255,0.04)',
+              border: '1px solid rgba(255,255,255,0.08)',
+              borderRadius: '999px',
+              padding: '8px 12px',
+              justifySelf: 'center',
+            }}>
+              Move {Math.max(currentPly + 1, 0)}
             </div>
             <button 
-              disabled={currentPly >= replayTimeline.length - 1}
+              type="button"
+              disabled={isAtReplayEnd}
               onClick={() => stepTimeline(currentPly + 1)}
-              style={{ padding: '8px 24px', background: '#262421', border: '1px solid #535250', color: '#fff', cursor: currentPly >= replayTimeline.length - 1 ? 'not-allowed' : 'pointer', borderRadius: '4px', opacity: currentPly >= replayTimeline.length - 1 ? 0.5 : 1 }}
+              onTouchEnd={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                if (!isAtReplayEnd) stepTimeline(currentPly + 1);
+              }}
+              style={{
+                width: '44px',
+                height: '44px',
+                borderRadius: '8px',
+                border: 'none',
+                background: isAtReplayEnd ? 'rgba(129,182,76,0.35)' : 'linear-gradient(135deg, #8fc75a, #70a73f)',
+                color: '#ffffff',
+                cursor: isAtReplayEnd ? 'not-allowed' : 'pointer',
+                opacity: isAtReplayEnd ? 0.55 : 1,
+                boxShadow: isAtReplayEnd ? 'none' : '0 6px 16px rgba(129,182,76,0.35)',
+                fontSize: '18px',
+                fontWeight: 900,
+                display: 'inline-flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                justifySelf: 'end',
+                touchAction: 'manipulation',
+                WebkitTapHighlightColor: 'transparent',
+                userSelect: 'none',
+              }}
             >
-              Next Move ▶
+              ▶
             </button>
           </div>
         )}
