@@ -3,7 +3,33 @@ import './index.css';
 import React, { StrictMode, useState, useRef } from 'react';
 import { createRoot } from 'react-dom/client';
 import { useCounter } from './hooks/useCounter';
+import type { MatchRecord, MoveInput, StoredMove } from '../shared/api';
 
+type PieceColor = 'w' | 'b';
+type PieceKind = 'pawn' | 'knight' | 'bishop' | 'rook' | 'queen' | 'king';
+
+type ReplayMove = {
+  move: MoveInput;
+  color: PieceColor;
+};
+
+type ReplayPosition = {
+  board: (string | null)[];
+  moves: Array<StoredMove & { color: PieceColor }>;
+  score: number;
+};
+
+type ParsedReplayMove = {
+  kind: PieceKind;
+  to: number;
+  promotion?: PieceKind;
+};
+
+type AppliedReplayMove = {
+  board: (string | null)[];
+  captured: string | null;
+  move: StoredMove;
+};
 
 
 const Chessboard = () => {
@@ -76,21 +102,376 @@ const Chessboard = () => {
     const [targetIndex, setTargetIndex] = useState<number | null>(null);
     const [capturedByWhite, setCapturedByWhite] = useState<string[]>([]);
     const [capturedByBlack, setCapturedByBlack] = useState<string[]>([]);
-    const [moves, setMoves] = useState<{ notation: string; color: 'w' | 'b' }[]>([]);
-    const handleOnClick = async () => {
-      const notations = moves.map(m => m.notation);
-      
-      if (notations.length !== 5) {
-        alert(`Please finish your moves first (${notations.length}/5)`);
-        return;
-      }
+    const [moves, setMoves] = useState<Array<StoredMove & { color: PieceColor }>>([]);
+    // Pop-up Modal visibility state
+    const [showModal, setShowModal] = useState<boolean>(false);
 
-      const success = await submitMoves(notations);
-      if (success) {
-        // Optional: add UI reset logic here (e.g., clear client board moves)
+    // Post-Game Replay Engine States
+    const [activeReplay, setActiveReplay] = useState<MatchRecord | null>(null);
+
+    const [replayTimeline, setReplayTimeline] = useState<ReplayMove[]>([]);
+    const [replayPositions, setReplayPositions] = useState<ReplayPosition[]>([]);
+    const [currentPly, setCurrentPly] = useState<number>(-1); // -1 means initial puzzle state
+    const [liveReplayScore, setLiveReplayScore] = useState<number>(0);
+    
+    const handleOnClick = async () => {
+    const moveRecords = moves.map(({ notation, pieceFrom, pieceTo }) => ({ notation, pieceFrom, pieceTo }));
+    
+    if (moveRecords.length !== 5) {
+      alert(`Please finish your moves first (${moveRecords.length}/5)`);
+      return;
+    }
+
+    const success = await submitMoves(moveRecords);
+    if (success) {
+      // Clear interactive UI gameplay tracking states
+      setSelected(null);
+      setLegalMoves([]);
+      setMoves([]);
+      setCapturedByWhite([]);
+      setCapturedByBlack([]);
+      
+      // Trigger the success scoreboard pop-up
+      setShowModal(true);
       }
     };
-        // Side Selection & Count Tracking
+
+    const pieceValues: Record<PieceKind, number> = { pawn: 1, knight: 3, bishop: 3, rook: 5, queen: 9, king: 15 };
+    const promotionValues: Partial<Record<PieceKind, number>> = { knight: 3, bishop: 3, rook: 5, queen: 9 };
+    const pieceLetterToKind: Record<string, PieceKind> = {
+      N: 'knight',
+      B: 'bishop',
+      R: 'rook',
+      Q: 'queen',
+      K: 'king',
+    };
+
+    const sanitizeSan = (san: string) =>
+      san
+        .trim()
+        .replace(/^\d+\.(\.\.)?/, '')
+        .replace(/[+#?!]+$/g, '')
+        .trim();
+
+    const getSquareIndex = (file: string, rank: string) => {
+      const fileIndex = file.charCodeAt(0) - 'a'.charCodeAt(0);
+      const rankNumber = Number(rank);
+
+      if (fileIndex < 0 || fileIndex > 7 || rankNumber < 1 || rankNumber > 8) {
+        return null;
+      }
+
+      return (8 - rankNumber) * 8 + fileIndex;
+    };
+
+    const parseReplayMove = (notation: string): ParsedReplayMove | null => {
+      const cleanSan = sanitizeSan(notation);
+      const withoutPromotion = cleanSan.replace(/=([NBRQ])$/, '');
+      const promotionMatch = cleanSan.match(/=([NBRQ])$/);
+      const destinationMatch = withoutPromotion.match(/([a-h])([1-8])$/);
+
+      if (!destinationMatch) return null;
+
+      const to = getSquareIndex(destinationMatch[1] ?? '', destinationMatch[2] ?? '');
+      if (to === null) return null;
+
+      const firstToken = withoutPromotion[0] ?? '';
+      const parsedMove: ParsedReplayMove = {
+        kind: pieceLetterToKind[firstToken] ?? 'pawn',
+        to,
+      };
+
+      const promotion = promotionMatch ? pieceLetterToKind[promotionMatch[1] ?? ''] : undefined;
+      if (promotion) {
+        parsedMove.promotion = promotion;
+      }
+
+      return parsedMove;
+    };
+
+    const isStoredMove = (move: MoveInput): move is StoredMove =>
+      typeof move !== 'string' &&
+      typeof move.notation === 'string' &&
+      typeof move.pieceFrom === 'number' &&
+      typeof move.pieceTo === 'number';
+
+    const getMoveNotation = (move: MoveInput) => typeof move === 'string' ? move : move.notation;
+
+    const isPieceKind = (value: string): value is PieceKind =>
+      value === 'pawn' ||
+      value === 'knight' ||
+      value === 'bishop' ||
+      value === 'rook' ||
+      value === 'queen' ||
+      value === 'king';
+
+    const getPieceColor = (piece: string): PieceColor => piece.startsWith('white_') ? 'w' : 'b';
+
+    const getPieceKind = (piece: string): PieceKind | null => {
+      const kind = piece.split('_')[1] ?? '';
+      return isPieceKind(kind) ? kind : null;
+    };
+
+    const isPathClear = (boardState: (string | null)[], from: number, to: number) => {
+      const fromRow = Math.floor(from / 8);
+      const fromCol = from % 8;
+      const toRow = Math.floor(to / 8);
+      const toCol = to % 8;
+      const rowStep = Math.sign(toRow - fromRow);
+      const colStep = Math.sign(toCol - fromCol);
+      let row = fromRow + rowStep;
+      let col = fromCol + colStep;
+
+      while (row !== toRow || col !== toCol) {
+        if (boardState[row * 8 + col]) return false;
+        row += rowStep;
+        col += colStep;
+      }
+
+      return true;
+    };
+
+    const isLegalPieceMove = (boardState: (string | null)[], from: number, to: number) => {
+      if (from === to || from < 0 || from > 63 || to < 0 || to > 63) return false;
+
+      const piece = boardState[from];
+      if (!piece) return false;
+
+      const pieceColor = getPieceColor(piece);
+      const destPiece = boardState[to];
+      if (destPiece && getPieceColor(destPiece) === pieceColor) return false;
+
+      const kind = getPieceKind(piece);
+      if (!kind) return false;
+
+      const fromRow = Math.floor(from / 8);
+      const fromCol = from % 8;
+      const toRow = Math.floor(to / 8);
+      const toCol = to % 8;
+      const rowDelta = toRow - fromRow;
+      const colDelta = toCol - fromCol;
+      const absRowDelta = Math.abs(rowDelta);
+      const absColDelta = Math.abs(colDelta);
+
+      if (kind === 'rook') {
+        return (rowDelta === 0 || colDelta === 0) && isPathClear(boardState, from, to);
+      }
+
+      if (kind === 'bishop') {
+        return absRowDelta === absColDelta && isPathClear(boardState, from, to);
+      }
+
+      if (kind === 'queen') {
+        return (rowDelta === 0 || colDelta === 0 || absRowDelta === absColDelta) && isPathClear(boardState, from, to);
+      }
+
+      if (kind === 'knight') {
+        return (absRowDelta === 2 && absColDelta === 1) || (absRowDelta === 1 && absColDelta === 2);
+      }
+
+      if (kind === 'king') {
+        return absRowDelta <= 1 && absColDelta <= 1;
+      }
+
+      const direction = pieceColor === 'w' ? -1 : 1;
+      const startingRow = pieceColor === 'w' ? 6 : 1;
+
+      if (colDelta === 0 && rowDelta === direction) {
+        return !destPiece;
+      }
+
+      if (colDelta === 0 && fromRow === startingRow && rowDelta === direction * 2) {
+        const middle = boardState[(fromRow + direction) * 8 + fromCol];
+        return !middle && !destPiece;
+      }
+
+      return absColDelta === 1 && rowDelta === direction && Boolean(destPiece);
+    };
+
+    const applyReplayMove = (
+      boardState: (string | null)[],
+      color: PieceColor,
+      move: MoveInput,
+      isVariantGame: boolean = true // Add a flag to allow variant rules
+    ): AppliedReplayMove | null => {
+      const notation = getMoveNotation(move);
+      const colorName = color === 'w' ? 'white' : 'black';
+
+      let from = -1;
+      let to = -1;
+      let promotion: string | null = null;
+
+      // --- STEP 1: RESOLVE COORDINATES ---
+      if (isStoredMove(move)) {
+        if (move.pieceFrom < 0 || move.pieceFrom > 63 || move.pieceTo < 0 || move.pieceTo > 63 || move.pieceFrom === move.pieceTo) {
+          return null;
+        }
+        from = move.pieceFrom;
+        to = move.pieceTo;
+        const parsedMove = parseReplayMove(notation);
+        promotion = parsedMove?.promotion ?? null;
+      } else {
+        const parsedMove = parseReplayMove(notation);
+        if (!parsedMove) return null;
+        to = parsedMove.to;
+        promotion = parsedMove.promotion ?? null;
+
+        // Modified fallback search to account for friendly captures if variant rules apply
+        from = boardState.findIndex((piece, index) => {
+          const basicPieceMatch = piece === `${colorName}_${parsedMove.kind}`;
+          if (!basicPieceMatch) return false;
+          
+          // If it's standard chess rules, validate normally.
+          // If it's a self-capture variant, we might bypass standard validation.
+          return isLegalPieceMove(boardState, index, to) || isVariantGame;
+        });
+
+        if (from === -1) return null;
+      }
+
+      // --- STEP 2: PIECE & LEGALITY CHECK ---
+      const movingPiece = boardState[from];
+      if (!movingPiece || !movingPiece.startsWith(`${colorName}_`)) return null;
+
+      const targetPiece = boardState[to];
+      const isSelfCapture = targetPiece?.startsWith(`${colorName}_`);
+
+      // Bypassing standard logic: If it's a self-capture and variant is enabled, skip standard validation
+      if (isSelfCapture && isVariantGame) {
+        // Optional: Add simple pseudo-legal path verification here if needed 
+        // (e.g., ensuring a Rook moves in straight lines even if hitting its own piece)
+      } else {
+        // Standard rule path
+        if (!isLegalPieceMove(boardState, from, to)) return null;
+      }
+
+      // --- STEP 3: EXECUTE MOVE ---
+      const nextBoard = boardState.slice();
+      let captured = nextBoard[to] ?? null;
+
+      // Apply movement/promotion
+      nextBoard[to] = promotion ? `${colorName}_${promotion}` : movingPiece;
+      nextBoard[from] = null;
+
+      return {
+        board: nextBoard,
+        captured,
+        move: isStoredMove(move) ? move : {
+          notation: sanitizeSan(notation) || notation,
+          pieceFrom: from,
+          pieceTo: to,
+        },
+      };
+    };
+
+    const getReplayScoreDelta = (color: PieceColor, captured: string | null, notation: string) => {
+      const promotion = parseReplayMove(notation)?.promotion;
+      const capturedKind = captured?.split('_')[1] ?? '';
+      let swing = isPieceKind(capturedKind) ? pieceValues[capturedKind] : 0;
+
+      if (promotion) {
+        swing += promotionValues[promotion] ?? 0;
+      }
+
+      return color === 'w' ? swing : -swing;
+    };
+
+    const buildReplayTimeline = (match: MatchRecord, startingTurn: PieceColor): ReplayMove[] => {
+      if (!userData.userSide) return [];
+
+      const whiteSource = [...(userData.userSide === 'white' ? match.userMoves : match.opponentMoves)];
+      const blackSource = [...(userData.userSide === 'black' ? match.userMoves : match.opponentMoves)];
+      const timeline: ReplayMove[] = [];
+      
+      let currentTurn = startingTurn;
+
+      // Keep pulling moves in strict alternating order until both sources are empty
+      while (whiteSource.length > 0 || blackSource.length > 0) {
+        if (currentTurn === 'w') {
+          if (whiteSource.length > 0) {
+            timeline.push({ move: whiteSource.shift()!, color: 'w' });
+          }
+          currentTurn = 'b'; // Hand over turn to black
+        } else {
+          if (blackSource.length > 0) {
+            timeline.push({ move: blackSource.shift()!, color: 'b' });
+          }
+          currentTurn = 'w'; // Hand over turn to white
+        }
+      }
+
+      return timeline;
+    };
+
+    const buildReplayPositions = (fen: string, timeline: ReplayMove[]): ReplayPosition[] => {
+      let replayBoard = parseFEN(fen).board;
+      const positions: ReplayPosition[] = [{
+        board: replayBoard,
+        moves: [],
+        score: 0,
+      }];
+      let runningWhiteAdvantage = 0;
+      const appliedMoves: Array<StoredMove & { color: PieceColor }> = [];
+
+      for (const replayMove of timeline) {
+        const appliedMove = applyReplayMove(replayBoard, replayMove.color, replayMove.move, true); // Enable variant rules for self-capture
+
+        if (!appliedMove) {
+          runningWhiteAdvantage += replayMove.color === 'w' ? -15 : 15;
+          appliedMoves.push({
+            notation: `${sanitizeSan(getMoveNotation(replayMove.move)) || getMoveNotation(replayMove.move)} (unplayed)`,
+            color: replayMove.color,
+            pieceFrom: -1,
+            pieceTo: -1,
+          });
+          positions.push({
+            board: replayBoard,
+            moves: [...appliedMoves],
+            score: userData.userSide === 'white' ? runningWhiteAdvantage : -runningWhiteAdvantage,
+          });
+          break;
+        }
+
+        replayBoard = appliedMove.board;
+        runningWhiteAdvantage += getReplayScoreDelta(replayMove.color, appliedMove.captured, getMoveNotation(replayMove.move));
+        appliedMoves.push({ ...appliedMove.move, color: replayMove.color });
+        positions.push({
+          board: replayBoard,
+          moves: [...appliedMoves],
+          score: userData.userSide === 'white' ? runningWhiteAdvantage : -runningWhiteAdvantage,
+        });
+      }
+
+      return positions;
+    };
+
+    // Setup a chosen match for replay simulation
+    const loadReplayGame = (match: MatchRecord | null) => {
+      if (!match || !gameData) return;
+      
+      setActiveReplay(match);
+      setCurrentPly(-1); // Reset back to baseline FEN
+
+      const timeline = buildReplayTimeline(match, gameData.turn);
+      const positions = buildReplayPositions(gameData.fen, timeline);
+      setReplayTimeline(timeline);
+      setReplayPositions(positions);
+      setBoard(positions[0]?.board ?? parseFEN(gameData.fen).board);
+      setMoves(positions[0]?.moves ?? []);
+      setLiveReplayScore(positions[0]?.score ?? 0);
+    };
+
+    // Re-simulate timeline changes sequentially to update board and live scores
+    const stepTimeline = (targetPly: number) => {
+      const boundedPly = Math.max(-1, Math.min(targetPly, replayPositions.length - 2));
+      const position = replayPositions[boundedPly + 1];
+      if (!position) return;
+
+      setBoard(position.board);
+      setMoves(position.moves);
+      setCurrentPly(boundedPly);
+      setLiveReplayScore(position.score);
+    };
 
 
 
@@ -125,7 +506,7 @@ const Chessboard = () => {
       const ranks = ['8', '7', '6', '5', '4', '3', '2', '1'];
       const toSquare = files![to % 8]! + ranks[Math.floor(to / 8)];
       const moveNotation = (kind === 'pawn' ? '' : kind === 'knight' ? 'N' : kind![0]!.toUpperCase()) + toSquare;
-      setMoves((prev) => [...prev, { notation: moveNotation, color: pieceColor }]);
+      setMoves((prev) => [...prev, { notation: moveNotation, color: pieceColor, pieceFrom: from, pieceTo: to }]);
 
       try {
         if (destPiece) {
@@ -145,7 +526,7 @@ const Chessboard = () => {
       }
     };
 
-    // --- Move generation: simple legal move calculator (no check detection) ---
+    // Piece movement rules, without check/checkmate validation.
     const getLegalMoves = (boardState: (string | null)[], from: number): number[] => {
       const piece = boardState[from];
       if (!piece) return [];
@@ -192,7 +573,7 @@ const Chessboard = () => {
           const r = r0 + dr, c = c0 + dc;
           if (!inBounds(r, c)) continue;
           const t = boardState[idx(r, c)];
-          if (!t) moves.push(idx(r, c));
+          moves.push(idx(r, c));
         }
       }
       if (kind === 'king') {
@@ -201,7 +582,7 @@ const Chessboard = () => {
           const r = r0+dr, c = c0+dc;
           if (!inBounds(r,c)) continue;
           const t = boardState[idx(r,c)];
-          if (!t) moves.push(idx(r,c));
+          moves.push(idx(r,c));
         }
       }
       if (kind === 'pawn') {
@@ -272,8 +653,7 @@ const Chessboard = () => {
     const gameSubtitle = gameMeta?.event || (gameMeta?.year ? `${gameMeta.year} Chess championship` : 'Chess championship');
     const titleText = `${gameTitle}`;
 
-    const { username, gameData, selectSide, playerCounts, userSide , submitMoves, submitting } = useCounter();
-
+    const { gameData, userData, submitMoves, submitting, selectSide, playerCounts } = useCounter();
     const boardStyle: React.CSSProperties = {
       border: '4px solid rgba(255,255,255,0.08)',
       boxShadow: '0 0 40px rgba(0,0,0,0.45)',
@@ -284,7 +664,7 @@ const Chessboard = () => {
       boxSizing: 'content-box',
       touchAction: 'none',
       background: '#e6e0d5',
-      transform: userSide === 'black' ? 'rotate(180deg)' : undefined,
+      transform: userData.userSide === 'black' ? 'rotate(180deg)' : undefined,
     };
 
     React.useEffect(() => {
@@ -301,6 +681,15 @@ const Chessboard = () => {
       setGameMeta({ ...gameData.meta, turn: gameData.turn });
     }, [gameData]);
 
+    React.useEffect(() => {
+      if (!gameData || !userData.hasSubmitted || activeReplay) return;
+      const defaultReplay = userData.bestMatch ?? userData.worstMatch;
+      if (!defaultReplay) return;
+
+      const replayTimer = window.setTimeout(() => loadReplayGame(defaultReplay), 0);
+      return () => window.clearTimeout(replayTimer);
+    }, [gameData, userData.hasSubmitted, userData.bestMatch, userData.worstMatch, activeReplay, loadReplayGame]);
+
     // update legal moves when selection or board changes
     React.useEffect(() => {
       if (selected === null) {
@@ -313,8 +702,8 @@ const Chessboard = () => {
     // helper: enforce turn-based selection/movement
     const isPieceMovable = (piece?: string | null) => {
       if (!piece) return false;
-      if (userSide === 'black') return piece.startsWith('black_');
-      if (userSide === 'white') return piece.startsWith('white_');
+      if (userData.userSide === 'black') return piece.startsWith('black_');
+      if (userData.userSide === 'white') return piece.startsWith('white_');
       return false;
     };
 
@@ -591,11 +980,11 @@ const Chessboard = () => {
       };
     }, [board, square]);
 
-    const isBlackLeft = gameMeta?.turn === 'b';
-    const leftHeader = isBlackLeft ? 'Black' : 'White';
-    const rightHeader = isBlackLeft ? 'White' : 'Black';
-
-    if (!userSide) {
+    const isReplayMode = userData.hasSubmitted && activeReplay !== null;
+    const showOpponentPlaceholder =
+      (gameMeta?.turn === 'b' && userData.userSide === 'white') ||
+      (gameMeta?.turn === 'w' && userData.userSide === 'black');
+    if (!userData.userSide) {
     return (
       <div style={{
         display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
@@ -666,6 +1055,36 @@ return (
     onTouchMove={onTouchMove}
     onTouchEnd={onTouchEnd}
   >
+    {/* ================= SUCCESS SCORE POP-UP OVERLAY ================= */}
+    {showModal && (
+      <div style={{
+        position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+        backgroundColor: 'rgba(0,0,0,0.85)', display: 'flex',
+        alignItems: 'center', justifyContent: 'center', zIndex: 10000, padding: '20px'
+      }}>
+        <div style={{
+          backgroundColor: '#211f1c', border: '1px solid #81b64c',
+          borderRadius: '8px', padding: '32px', maxWidth: '400px', width: '100%', textAlign: 'center'
+        }}>
+          <h2 style={{ color: '#81b64c', margin: '0 0 12px 0' }}>Turn Complete, {userData.username}!</h2>
+          <p style={{ color: '#bababa' }}>Your aggregate matrix score against all active opponents has been saved.</p>
+          <h1 style={{ fontSize: '48px', color: '#fff', margin: '16px 0' }}>{userData.score} pts</h1>
+          <button 
+            onClick={() => {
+              setShowModal(false);
+              loadReplayGame(userData.bestMatch ?? userData.worstMatch);
+            }}
+            style={{
+              background: '#81b64c', color: '#fff', border: 'none', padding: '12px 24px',
+              borderRadius: '4px', fontWeight: 700, cursor: 'pointer', width: '100%'
+            }}
+          >
+            Continue to Dashboard
+          </button>
+        </div>
+      </div>
+    )}
+
     {/* ================= HEADER SECTION (STAYS ON TOP) ================= */}
     <div style={{ textAlign: 'center', width: '100%', marginBottom: '4px' }}>
       <h1 style={{ fontSize: 'min(6vw, 28px)', fontWeight: 800, letterSpacing: '-0.025em', color: '#fff', margin: '0 0 4px 0' }}>
@@ -695,29 +1114,51 @@ return (
     }}>
       <span style={{ fontSize: '11px', fontWeight: 700, textTransform: 'uppercase', color: '#989795', marginRight: '8px' }}>Moves:</span>
       
-      {/* If no moves have been played yet, Black starts, and user is White -> display placeholder */}
-      {(gameMeta?.turn === 'b' && userSide === 'white'|| gameMeta?.turn === 'w' && userSide === 'black') && (
-        <span style={{ fontWeight: 800 }}><span style={{ color: '#706e6b' }}>1.</span> <span style={{ color: '#c01812' }}>?</span></span>
-      )}
-
-      {moves.map((m, idx) => {
-
-        return (
-          <div>
-          <span key={idx} style={{ fontWeight: 500, marginRight: '6px' }}>
-            <span style={{ color: '#706e6b' }}>{idx + 1}.</span> {m.notation}
+      {isReplayMode ? (
+        <>
+          <span style={{ color: '#81b64c', fontWeight: 600, marginRight: '8px' }}>
+            vs u/{activeReplay?.opponent}
           </span>
-            {idx!==4 && (gameMeta?.turn === 'b' && userSide === 'white'|| gameMeta?.turn === 'w' && userSide === 'black')  &&(<span key={idx} style={{ fontWeight: 800, marginRight: '6px' }}>
-              <span style={{ color: '#706e6b' }}>{idx + 2}.</span> <span style={{ color: '#c01812' }}>?</span>
-            </span>)}
-            {!(gameMeta?.turn === 'b' && userSide === 'white'|| gameMeta?.turn === 'w' && userSide === 'black')  &&(<span key={idx} style={{ fontWeight: 800, marginRight: '6px' }}>
-            <span style={{ color: '#706e6b' }}>{idx + 1}.</span> <span style={{ color: '#c01812' }}>?</span>
-          </span>)}
-          </div>
-        );
-        
-      })}
-      
+          {moves.length > 0 ? moves.map((m, idx) => (
+            <span
+              key={`${m.color}-${idx}-${m.notation}`}
+              style={{
+                color: idx === currentPly ? '#fff' : '#bababa',
+                fontWeight: idx === currentPly ? 800 : 500,
+                marginRight: '6px',
+              }}
+            >
+              <span style={{ color: '#706e6b' }}>{Math.floor(idx / 2) + 1}{m.color === 'b' ? '...' : '.'}</span> {m.notation}
+            </span>
+          )) : (
+            <span style={{ color: '#989795' }}>Initial position</span>
+          )}
+        </>
+      ) : (
+        <>
+          {showOpponentPlaceholder && (
+            <span style={{ fontWeight: 800 }}><span style={{ color: '#706e6b' }}>1.</span> <span style={{ color: '#c01812' }}>?</span></span>
+          )}
+
+          {moves.map((m, idx) => (
+            <div key={idx}>
+              <span style={{ fontWeight: 500, marginRight: '6px' }}>
+                <span style={{ color: '#706e6b' }}>{idx + 1}.</span> {m.notation}
+              </span>
+              {idx !== 4 && showOpponentPlaceholder && (
+                <span style={{ fontWeight: 800, marginRight: '6px' }}>
+                  <span style={{ color: '#706e6b' }}>{idx + 2}.</span> <span style={{ color: '#c01812' }}>?</span>
+                </span>
+              )}
+              {!showOpponentPlaceholder && (
+                <span style={{ fontWeight: 800, marginRight: '6px' }}>
+                  <span style={{ color: '#706e6b' }}>{idx + 1}.</span> <span style={{ color: '#c01812' }}>?</span>
+                </span>
+              )}
+            </div>
+          ))}
+        </>
+      )}
     </div>
 
     {/* ================= MAIN RESPONSIVE CONTAINER ================= */}
@@ -754,10 +1195,10 @@ return (
           color: '#fff'
         }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontWeight: 600 }}>
-            <div style={badgeStyle(userSide === 'white' ? '#000000' : '#ffffff')} />
-            <span>ShadowChess GM</span>
+            <div style={badgeStyle(userData.userSide === 'white' ? '#000000' : '#ffffff')} />
+            <span>{isReplayMode ? `u/${activeReplay?.opponent}` : 'ShadowChess GM'}</span>
             <span style={{ fontSize: '11px', color: '#989795', fontWeight: 400 }}>
-              ({userSide === 'white' ? 'Black' : 'White'})
+              ({userData.userSide === 'white' ? 'Black' : 'White'})
             </span>
           </div>
         </div>
@@ -777,8 +1218,8 @@ return (
             borderRadius: '4px',
             overflow: 'hidden'
           }} 
-          onDragOver={onBoardDragOver} 
-          onDrop={onBoardDrop}
+          onDragOver={userData.hasSubmitted ? undefined : onBoardDragOver} 
+          onDrop={userData.hasSubmitted ? undefined : onBoardDrop}
         >
           {Array.from({ length: 64 }).map((_, i) => {
             const row = Math.floor(i / 8);
@@ -790,9 +1231,10 @@ return (
             return (
               <div
                 key={i}
-                onClick={() => onSquareClick(i)}
-                onTouchStart={(e) => onSquareTouchStart(e, i)}
+                onClick={() => !userData.hasSubmitted && onSquareClick(i)}
+                onTouchStart={(e) => !userData.hasSubmitted && onSquareTouchStart(e, i)}
                 onDrop={(e) => {
+                  if (userData.hasSubmitted) return;
                   e.preventDefault();
                   const from = Number(e.dataTransfer.getData('text/plain'));
                   if (!Number.isNaN(from)) {
@@ -809,13 +1251,14 @@ return (
                 }}
                 data-index={i}
                 onDragOver={(e) => {
+                  if (userData.hasSubmitted) return;
                   e.preventDefault();
                   try { e.dataTransfer.dropEffect = 'move'; } catch {}
                   setTargetIndex(i);
                 }}
                 style={{ 
                   background: bg, 
-                  cursor: 'pointer', 
+                  cursor: userData.hasSubmitted ? 'default' : 'pointer', 
                   position: 'relative',
                   display: 'flex',
                   alignItems: 'center',
@@ -828,9 +1271,9 @@ return (
                   <img
                     src={`/pieces/${piece}.png`}
                     alt={piece}
-                    draggable
+                    draggable={!userData.hasSubmitted}
                     onDragStart={(e: React.DragEvent<HTMLImageElement>) => {
-                      if (!isPieceMovable(piece)) {
+                      if (userData.hasSubmitted || !isPieceMovable(piece)) {
                         e.preventDefault();
                         return;
                       }
@@ -841,23 +1284,23 @@ return (
                       setGrabCursor(true);
                       setGhost({ piece, x: e.clientX, y: e.clientY - Math.floor(square * 0.35), scale: 1.15 });
                     }}
-                    onDragEnd={() => { setDragging(null); setGhost(null); setGrabCursor(false); setTargetIndex(null); }}
-                    onTouchStart={(e) => onTouchStart(e, i)}
+                    onDragEnd={() => { if (!userData.hasSubmitted) { setDragging(null); setGhost(null); setGrabCursor(false); setTargetIndex(null); } }}
+                    onTouchStart={(e) => !userData.hasSubmitted && onTouchStart(e, i)}
                     style={{
                       width: '85%',
                       height: '85%',
                       objectFit: 'contain',
                       position: 'relative',
-                      transform: `${(selected === i || dragging === i) ? 'scale(1.12)' : ''}${userSide === 'black' ? ' rotate(180deg)' : ''}`.trim() || undefined,
+                      transform: `${(selected === i || dragging === i) ? 'scale(1.12)' : ''}${userData.userSide === 'black' ? ' rotate(180deg)' : ''}`.trim() || undefined,
                       transition: 'transform 0.12s ease',
                       zIndex: (selected === i || dragging === i) ? 2 : 1,
-                      cursor: 'grab',
+                      cursor: userData.hasSubmitted ? 'default' : 'grab',
                       visibility: dragging === i ? 'hidden' : 'visible',
                     }}
                   />
                 )}
 
-                {(targetIndex === i || legalMoves.includes(i)) && (
+                {!userData.hasSubmitted && (targetIndex === i || legalMoves.includes(i)) && (
                   <div style={{ position: 'absolute', left: '50%', top: '50%', transform: 'translate(-50%, -50%)', width: '35%', height: '35%', borderRadius: '50%', background: 'rgba(0,0,0,0.18)', pointerEvents: 'none', zIndex: 2 }} />
                 )}
               </div>
@@ -878,13 +1321,37 @@ return (
           color: '#fff'
         }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontWeight: 600 }}>
-            <div style={badgeStyle(userSide === 'black' ? '#000000' : '#ffffff')} />
-            <span>u/{username ?? 'anonymous'}</span>
+            <div style={badgeStyle(userData.userSide === 'black' ? '#000000' : '#ffffff')} />
+            <span>u/{userData.username ?? 'anonymous'}</span>
             <span style={{ fontSize: '11px', color: '#989795', fontWeight: 400 }}>
-              ({userSide === 'black' ? 'Black' : 'White'})
+              ({userData.userSide === 'black' ? 'Black' : 'White'})
             </span>
           </div>
         </div>
+
+        {/* ================= LEFT & RIGHT BUTTON PANEL (UNDER THE BOARD) ================= */}
+        {isReplayMode && (
+          <div style={{ display: 'flex', gap: '16px', justifyContent: 'center', width: '100%', margin: '12px 0' }}>
+            <button 
+              disabled={currentPly <= -1}
+              onClick={() => stepTimeline(currentPly - 1)}
+              style={{ padding: '8px 24px', background: '#262421', border: '1px solid #535250', color: '#fff', cursor: currentPly <= -1 ? 'not-allowed' : 'pointer', borderRadius: '4px', opacity: currentPly <= -1 ? 0.5 : 1 }}
+            >
+              ◀ Previous Move
+            </button>
+            <div style={{ alignSelf: 'center', fontWeight: 'bold', color: '#fff', textAlign: 'center', fontSize: '13px' }}>
+              <div>{currentPly === -1 ? "Initial Position" : `Half-Move ${currentPly + 1} / ${replayTimeline.length}`}</div>
+              <div style={{ color: '#81b64c', marginTop: '2px' }}>Match Gain: {liveReplayScore} pts</div>
+            </div>
+            <button 
+              disabled={currentPly >= replayTimeline.length - 1}
+              onClick={() => stepTimeline(currentPly + 1)}
+              style={{ padding: '8px 24px', background: '#262421', border: '1px solid #535250', color: '#fff', cursor: currentPly >= replayTimeline.length - 1 ? 'not-allowed' : 'pointer', borderRadius: '4px', opacity: currentPly >= replayTimeline.length - 1 ? 0.5 : 1 }}
+            >
+              Next Move ▶
+            </button>
+          </div>
+        )}
 
       </div>
 
@@ -905,54 +1372,102 @@ return (
         border: '1px solid rgba(255,255,255,0.05)'
       }}>
         
-        {/* BLOCK 4: CAPTURED PIECES PANEL */}
-        <div>
-          <div style={{ fontSize: '11px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '6px', color: '#989795' }}>Material Captured</div>
-          
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', background: 'rgba(255,255,255,0.03)', padding: '4px 8px', borderRadius: '4px' }}>
-              <span style={{ fontSize: '11px', fontWeight: 600, minWidth: '40px', color: '#fff' }}>White:</span>
-              <div style={{ display: 'flex', gap: '2px', flexWrap: 'wrap' }}>
-                {capturedByWhite.length > 0 ? capturedByWhite.map((piece, index) => (
-                  <img key={`wcap-${index}`} src={`/pieces/${piece}.png`} alt={piece} style={{ width: 16, height: 16 }} />
-                )) : <span style={{ color: '#535250', fontSize: '11px' }}>None</span>}
+        {!userData.hasSubmitted ? (
+          <>
+            {/* BLOCK 4: CAPTURED PIECES PANEL */}
+            <div>
+              <div style={{ fontSize: '11px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '6px', color: '#989795' }}>Material Captured</div>
+              
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '6px', background: 'rgba(255,255,255,0.03)', padding: '4px 8px', borderRadius: '4px' }}>
+                  <span style={{ fontSize: '11px', fontWeight: 600, minWidth: '40px', color: '#fff' }}>White:</span>
+                  <div style={{ display: 'flex', gap: '2px', flexWrap: 'wrap' }}>
+                    {capturedByWhite.length > 0 ? capturedByWhite.map((piece, index) => (
+                      <img key={`wcap-${index}`} src={`/pieces/${piece}.png`} alt={piece} style={{ width: 16, height: 16 }} />
+                    )) : <span style={{ color: '#535250', fontSize: '11px' }}>None</span>}
+                  </div>
+                </div>
+
+                <div style={{ display: 'flex', alignItems: 'center', gap: '6px', background: 'rgba(255,255,255,0.03)', padding: '4px 8px', borderRadius: '4px' }}>
+                  <span style={{ fontSize: '11px', fontWeight: 600, minWidth: '40px', color: '#fff' }}>Black:</span>
+                  <div style={{ display: 'flex', gap: '2px', flexWrap: 'wrap' }}>
+                    {capturedByBlack.length > 0 ? capturedByBlack.map((piece, index) => (
+                      <img key={`bcap-${index}`} src={`/pieces/${piece}.png`} alt={piece} style={{ width: 16, height: 16 }} />
+                    )) : <span style={{ color: '#535250', fontSize: '11px' }}>None</span>}
+                  </div>
+                </div>
               </div>
             </div>
 
-            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', background: 'rgba(255,255,255,0.03)', padding: '4px 8px', borderRadius: '4px' }}>
-              <span style={{ fontSize: '11px', fontWeight: 600, minWidth: '40px', color: '#fff' }}>Black:</span>
-              <div style={{ display: 'flex', gap: '2px', flexWrap: 'wrap' }}>
-                {capturedByBlack.length > 0 ? capturedByBlack.map((piece, index) => (
-                  <img key={`bcap-${index}`} src={`/pieces/${piece}.png`} alt={piece} style={{ width: 16, height: 16 }} />
-                )) : <span style={{ color: '#535250', fontSize: '11px' }}>None</span>}
+            {/* BLOCK 5: ACTIONS / SUBMIT BUTTON */}
+            <button 
+              onClick={handleOnClick}
+              disabled={submitting || moves.length !== 5}
+              style={{
+                marginTop: '4px',
+                background: moves.length === 5 ? '#81b64c' : '#535250', 
+                color: '#fff',
+                border: 'none',
+                padding: '10px 14px',
+                borderRadius: '4px',
+                fontSize: '14px',
+                fontWeight: 700,
+                cursor: moves.length === 5 && !submitting ? 'pointer' : 'not-allowed',
+                boxShadow: moves.length === 5 ? '0 3px 0 #5b8433' : '0 3px 0 #3a3937',
+                opacity: submitting ? 0.7 : 1,
+                transition: 'all 0.1s ease',
+                textAlign: 'center',
+                width: '100%'
+              }}
+            >
+              {submitting ? 'Submitting...' : `Submit Moves (${moves.length}/5)`}
+            </button>
+          </>
+        ) : (
+          /* ================= POST-MORTEM DASHBOARD SELECTOR ================= */
+          <div>
+            <h3 style={{ margin: '0 0 4px 0', color: '#fff' }}>Post-Game Dashboard</h3>
+            <p style={{ fontSize: '12px', color: '#989795', margin: '0 0 16px 0' }}>
+              Aggregate Score: <span style={{ color: '#fff', fontWeight: 700 }}>{userData.score} pts</span>
+            </p>
+            
+            {/* Best Match Button Card */}
+            {userData.bestMatch ? (
+              <div style={{ background: 'rgba(129,182,76,0.1)', border: '1px solid #81b64c', padding: '12px', borderRadius: '6px', marginBottom: '12px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', marginBottom: '8px' }}>
+                  <span style={{ fontWeight: 'bold', color: '#81b64c' }}>🏆 Best Match</span>
+                  <span style={{ color: '#fff', fontWeight: 600 }}>+{userData.bestMatch.score} pts</span>
+                </div>
+                <button 
+                  onClick={() => loadReplayGame(userData.bestMatch)}
+                  style={{ width: '100%', background: '#81b64c', border: 'none', color: '#fff', padding: '8px', borderRadius: '4px', fontWeight: 600, cursor: 'pointer' }}
+                >
+                  Simulate vs u/{userData.bestMatch.opponent}
+                </button>
               </div>
-            </div>
+            ) : (
+              <p style={{ fontSize: '12px', color: '#535250' }}>No top performance record found.</p>
+            )}
+
+            {/* Worst Match Button Card */}
+            {userData.worstMatch ? (
+              <div style={{ background: 'rgba(192,24,18,0.1)', border: '1px solid #c01812', padding: '12px', borderRadius: '6px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', marginBottom: '8px' }}>
+                  <span style={{ fontWeight: 'bold', color: '#c01812' }}>📉 Worst Match</span>
+                  <span style={{ color: '#fff', fontWeight: 600 }}>{userData.worstMatch.score} pts</span>
+                </div>
+                <button 
+                  onClick={() => loadReplayGame(userData.worstMatch)}
+                  style={{ width: '100%', background: '#c01812', border: 'none', color: '#fff', padding: '8px', borderRadius: '4px', fontWeight: 600, cursor: 'pointer' }}
+                >
+                  Simulate vs u/{userData.worstMatch.opponent}
+                </button>
+              </div>
+            ) : (
+              <p style={{ fontSize: '12px', color: '#535250' }}>No low performance record found.</p>
+            )}
           </div>
-        </div>
-
-        {/* BLOCK 5: ACTIONS / SUBMIT BUTTON */}
-        <button 
-          onClick={handleOnClick}
-          disabled={submitting || moves.length !== 5}
-          style={{
-            marginTop: '4px',
-            background: moves.length === 5 ? '#81b64c' : '#535250', // Gray out if not exactly 5 moves
-            color: '#fff',
-            border: 'none',
-            padding: '10px 14px',
-            borderRadius: '4px',
-            fontSize: '14px',
-            fontWeight: 700,
-            cursor: moves.length === 5 && !submitting ? 'pointer' : 'not-allowed',
-            boxShadow: moves.length === 5 ? '0 3px 0 #5b8433' : '0 3px 0 #3a3937',
-            opacity: submitting ? 0.7 : 1,
-            transition: 'all 0.1s ease',
-            textAlign: 'center',
-            width: '100%'
-          }}
-        >
-          {submitting ? 'Submitting...' : `Submit Moves (${moves.length}/5)`}
-        </button>
+        )}
 
       </div>
     </div>

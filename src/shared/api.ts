@@ -5,6 +5,14 @@ export type GameData = {
   seed: string;
 };
 
+export type StoredMove = {
+  notation: string;
+  pieceFrom: number;
+  pieceTo: number;
+};
+
+export type MoveInput = string | StoredMove;
+
 export type InitResponse = {
   type: 'init';
   postId: string;
@@ -16,20 +24,18 @@ export type InitResponse = {
     white: number;
     black: number;
   };
+  score: number | null;
+  hasSubmitted: boolean;
+  moves: MoveInput[];
+  bestMatch: MatchRecord | null;
+  worstMatch: MatchRecord | null;
 };
 
-
-
-export type IncrementResponse = {
-  type: 'increment';
-  postId: string;
-  count: number;
-};
-
-export type DecrementResponse = {
-  type: 'decrement';
-  postId: string;
-  count: number;
+export type MatchRecord = {
+  opponent: string;
+  userMoves: MoveInput[];
+  opponentMoves: MoveInput[];
+  score: number;
 };
 
 export type SetSideResponse = {
@@ -43,5 +49,5 @@ export type SubmitMovesResponse = {
   status: 'success';
   postId: string;
   username: string;
-  moves: string[];
+  moves: MoveInput[];
 };

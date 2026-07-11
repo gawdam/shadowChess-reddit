@@ -1,33 +1,51 @@
 import { useCallback, useEffect, useState } from 'react';
 import type {
   InitResponse,
-  IncrementResponse,
-  DecrementResponse,
+  MatchRecord,
+  MoveInput,
+  StoredMove,
 } from '../../shared/api';
 
-interface CounterState {
+// Consolidated user profile block
+type UserData = {
+  username: string;
+  userSide: 'white' | 'black' | null;
+  hasSubmitted: boolean;
+  moves: MoveInput[];
+  score: number | null;
+  bestMatch: MatchRecord | null;   // New field
+  worstMatch: MatchRecord | null;  // New field
+};
+
+type CounterState = {
   count: number;
-  username: string | null;
   gameData: InitResponse['gameData'];
   loading: boolean;
-  userSide: 'white' | 'black' | null;
   playerCounts: { white: number; black: number } | null;
-}
+  userData: UserData; // Unified data block
+};
 
 export const useCounter = () => {
   const [state, setState] = useState<CounterState>({
     count: 0,
-    username: null,
     gameData: null,
     loading: true,
-    userSide: null,
     playerCounts: null,
+    userData: {
+      username: 'anonymous',
+      userSide: null,
+      hasSubmitted: false,
+      moves: [],
+      score: null,
+      bestMatch: null,
+      worstMatch: null,
+    },
   });
   const [postId, setPostId] = useState<string | null>(null);
-  // Add a dedicated state variable for move submission tracking
   const [submitting, setSubmitting] = useState<boolean>(false);
 
-  // fetch initial data
+  // Fetch initial data
+// Fetch initial data
   useEffect(() => {
     const init = async () => {
       try {
@@ -35,15 +53,24 @@ export const useCounter = () => {
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data: InitResponse = await res.json();
         if (data.type !== 'init') throw new Error('Unexpected response');
-        console.log('Init response:', data.userSide);
-        setState({
+        
+        setState((prev) => ({
+          ...prev, 
           count: data.count,
-          username: data.username,
           gameData: data.gameData ?? null,
           loading: false,
-          userSide: data.userSide ?? null,
           playerCounts: data.playerCounts ?? null,
-        });
+          userData: {
+            username: data.username ?? 'anonymous',
+            userSide: data.userSide ?? null,
+            // 1. READ PERMANENT STATE FROM BACKEND DATA INSTANTLY
+            hasSubmitted: data.hasSubmitted ?? false, 
+            moves: data.moves ?? [],
+            score: data.score ?? null,
+            bestMatch: data.bestMatch ?? null,   // New field
+            worstMatch: data.worstMatch ?? null,  // New field
+          }
+        }));
         setPostId(data.postId);
       } catch (err) {
         console.error('Failed to init counter', err);
@@ -53,8 +80,13 @@ export const useCounter = () => {
     void init();
   }, []);
 
+  // Update chosen side safely within unified structure
   const selectSide = useCallback(async (side: 'white' | 'black') => {
-    setState((prev) => ({ ...prev, userSide: side }));
+    setState((prev) => ({
+      ...prev,
+      userData: { ...prev.userData, userSide: side }
+    }));
+    
     try {
       const res = await fetch('/api/set-side', {
         method: 'POST',
@@ -64,58 +96,56 @@ export const useCounter = () => {
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
     } catch (err) {
       console.error('Failed to save chosen side', err);
-      setState((prev) => ({ ...prev, userSide: null }));
+      setState((prev) => ({
+        ...prev,
+        userData: { ...prev.userData, userSide: null }
+      }));
     }
   }, []);
 
-  const update = useCallback(
-    async (action: 'increment' | 'decrement') => {
-      if (!postId) {
-        console.error('No postId – cannot update counter');
-        return;
-      }
-      try {
-        const res = await fetch(`/api/${action}`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({}),
-        });
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const data: IncrementResponse | DecrementResponse = await res.json();
-        setState((prev) => ({ ...prev, count: data.count }));
-      } catch (err) {
-        console.error(`Failed to ${action}`, err);
-      }
-    },
-    [postId]
-  );
-
-  // NEW: Add the submitMoves handler callback
-  const submitMoves = useCallback(async (moveNotations: string[]) => {
+  // Updated Move Submission & Server Scoring Pipeline Handler
+  const submitMoves = useCallback(async (moveRecords: StoredMove[]) => {
     if (!postId) {
       console.error('No postId – cannot submit moves');
-      alert('Post ID missing. Please refresh and try again.');
       return false;
     }
 
     setSubmitting(true);
     try {
-      const res = await fetch('/api/submit-moves', {
+      // Step 1: Save the raw move arrays to the backend database
+      const movesRes = await fetch('/api/submit-moves', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ moves: moveNotations }),
+        body: JSON.stringify({ moves: moveRecords }),
       });
 
-      const data = await res.json();
+      const movesData = await movesRes.json();
+      if (!movesRes.ok) throw new Error(movesData.message || `HTTP ${movesRes.status}`);
 
-      if (!res.ok) {
-        throw new Error(data.message || `HTTP error! status: ${res.status}`);
-      }
+      // Step 2: Trigger the matrix scoring engine on the server
+      const scoreRes = await fetch('/api/update-scores', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({}), // Payload determined implicitly via server context / session keys
+      });
 
-      alert('Moves submitted successfully!');
-      return true; // Return status back to the caller
+      const scoreData = await scoreRes.json();
+      if (!scoreRes.ok) throw new Error(scoreData.message || `HTTP ${scoreRes.status}`);
+
+      // Consolidate verified state metrics returned straight from your backend source of truth
+      setState((prev) => ({
+        ...prev,
+        userData: {
+          ...prev.userData,
+          hasSubmitted: true,
+          moves: moveRecords,
+          score: scoreData.updatedScore // Pulled directly from the server calculation response
+        }
+      }));
+
+      return true;
     } catch (err) {
-      console.error('Failed to submit moves:', err);
+      console.error('Failed to submit moves and update scores:', err);
       alert(err instanceof Error ? err.message : 'Failed to save moves.');
       return false;
     } finally {
@@ -123,17 +153,11 @@ export const useCounter = () => {
     }
   }, [postId]);
 
-  const increment = useCallback(() => update('increment'), [update]);
-  const decrement = useCallback(() => update('decrement'), [update]);
-
   return {
     ...state,
-    increment,
-    decrement,
+    userData: state.userData, 
+    submitting,
+    submitMoves,
     selectSide,
-    submitMoves,     // Exposing the submission callback
-    submitting,      // Exposing the submission flag
-    userSide: state.userSide,
-    playerCounts: state.playerCounts,
   } as const;
 };
