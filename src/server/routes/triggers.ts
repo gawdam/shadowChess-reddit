@@ -3,7 +3,7 @@ import type { OnAppInstallRequest, TriggerResponse } from '@devvit/web/shared';
 import { context } from '@devvit/web/server';
 import { createPost } from '../core/post';
 import { redis } from '@devvit/web/server';
-import games from '../../../src/shared/anand_games.json';
+import games from '../../../src/shared/pro_games_base_dataset.json';
 
 export const triggers = new Hono();
 
@@ -12,7 +12,7 @@ triggers.post('/on-app-install', async (c) => {
     const post = await createPost();
     const input = await c.req.json<OnAppInstallRequest>();
     
-    await redis.set('shadowchess_anand_games', JSON.stringify(games));
+    await redis.set('shadowchess_games', JSON.stringify(games));
 
     return c.json<TriggerResponse>(
       {

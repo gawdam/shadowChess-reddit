@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import { context, redis, reddit } from '@devvit/web/server';
-import games from '../../../src/shared/anand_games.json';
+import games from '../../../src/shared/pro_games_base_dataset.json';
 import type {
   GameData,
   InitResponse,
@@ -119,7 +119,7 @@ const getLeaderboards = async (postId: string): Promise<Leaderboards> => {
 
 api.get('/init', async (c) => {
   const { postId } = context;
-  await redis.set('shadowchess_anand_games', JSON.stringify(games));
+  await redis.set('shadowchess_games', JSON.stringify(games));
 
   if (!postId) {
     console.error('API Init Error: postId not found in devvit context');

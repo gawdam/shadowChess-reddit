@@ -4,11 +4,10 @@ import React, { StrictMode, useState, useRef } from 'react';
 import { createRoot } from 'react-dom/client';
 import { useCounter } from './hooks/useCounter';
 import type { MatchRecord, MoveInput, StoredMove } from '../shared/api';
+import { HowToPlayDialog } from './howToPlayDialog';
 
 type PieceColor = 'w' | 'b';
 type PieceKind = 'pawn' | 'knight' | 'bishop' | 'rook' | 'queen' | 'king';
-type ThemeMode = 'light' | 'dark';
-
 type ReplayMove = {
   move: MoveInput;
   color: PieceColor;
@@ -106,13 +105,13 @@ const usePieceAssetsReady = () => {
   return ready;
 };
 
-const LoadingSpinner = ({ size = 44, accent = '#81b64c' }: { size?: number; accent?: string }) => (
+const LoadingSpinner = ({ size = 44, accent = '#FF6B6B' }: { size?: number; accent?: string }) => (
   <div
     style={{
       width: size,
       height: size,
       borderRadius: '50%',
-      border: `${Math.max(3, Math.floor(size / 10))}px solid rgba(255,255,255,0.16)`,
+      border: `${Math.max(3, Math.floor(size / 10))}px solid #000000`,
       borderTopColor: accent,
       animation: 'asyncchess-spin 0.9s linear infinite',
       boxSizing: 'border-box',
@@ -137,8 +136,7 @@ const LoadingPanel = ({
       display: 'flex',
       alignItems: 'center',
       justifyContent: 'center',
-      background: overlay ? 'rgba(17, 17, 17, 0.58)' : 'rgba(15, 15, 15, 0.78)',
-      backdropFilter: 'blur(6px)',
+      background: overlay ? 'rgba(255, 217, 61, 0.45)' : 'rgba(255, 253, 245, 0.92)',
       padding: '20px',
     }}
   >
@@ -146,20 +144,22 @@ const LoadingPanel = ({
       style={{
         minWidth: 'min(320px, 92vw)',
         maxWidth: '420px',
-        borderRadius: '14px',
-        border: '1px solid rgba(129, 182, 76, 0.32)',
-        background: 'rgba(28, 27, 24, 0.96)',
+        borderRadius: 0,
+        border: '4px solid #000000',
+        background: '#FFFDF5',
+        backgroundImage: 'radial-gradient(#000000 1.2px, transparent 1.2px)',
+        backgroundSize: '18px 18px',
         padding: '24px',
         textAlign: 'center',
-        color: '#f5f1e8',
-        boxShadow: '0 18px 48px rgba(0,0,0,0.38)',
+        color: '#000000',
+        boxShadow: 'none',
       }}
     >
       <div style={{ display: 'flex', justifyContent: 'center', marginBottom: '16px' }}>
         <LoadingSpinner />
       </div>
-      <div style={{ fontSize: '18px', fontWeight: 800, marginBottom: '8px' }}>{title}</div>
-      <div style={{ fontSize: '13px', lineHeight: 1.5, color: 'rgba(245,241,232,0.74)' }}>{detail}</div>
+      <div style={{ fontSize: '20px', fontWeight: 900, marginBottom: '8px', letterSpacing: '0.04em', textTransform: 'uppercase' }}>{title}</div>
+      <div style={{ fontSize: '13px', lineHeight: 1.5, color: '#000000', fontWeight: 700 }}>{detail}</div>
     </div>
   </div>
 );
@@ -172,6 +172,46 @@ const promotionLetterMap: Record<PromotionChoice, 'N' | 'B' | 'R' | 'Q'> = {
 };
 
 const promotionOptions: PromotionChoice[] = ['queen', 'rook', 'bishop', 'knight'];
+
+type NeoTheme = {
+  appBg: string;
+  panelBg: string;
+  cardBg: string;
+  textPrimary: string;
+  textSecondary: string;
+  textMuted: string;
+  borderSoft: string;
+  boardDark: string;
+  boardLight: string;
+  overlay: string;
+  accent: string;
+  secondary: string;
+  muted: string;
+  appGrid: string;
+  hardShadowSm: string;
+  hardShadowMd: string;
+  hardShadowLg: string;
+};
+
+const theme: NeoTheme = {
+  appBg: '#FFFDF5',
+  panelBg: '#FFFFFF',
+  cardBg: '#FFD93D',
+  textPrimary: '#000000',
+  textSecondary: '#000000',
+  textMuted: '#000000',
+  borderSoft: '#000000',
+  boardDark: '#B45309',
+  boardLight: '#FEF3C7',
+  overlay: 'rgba(255, 217, 61, 0.76)',
+  accent: '#FF6B6B',
+  secondary: '#FFD93D',
+  muted: '#C4B5FD',
+  appGrid: 'linear-gradient(to right, rgba(0,0,0,0.1) 1px, transparent 1px), linear-gradient(to bottom, rgba(0,0,0,0.1) 1px, transparent 1px)',
+  hardShadowSm: 'none',
+  hardShadowMd: 'none',
+  hardShadowLg: 'none',
+};
 
 
 const Chessboard = () => {
@@ -215,7 +255,9 @@ const Chessboard = () => {
       minHeight: '100vh',
       width: '100%',
       padding: 18,
-      background: '#f4efe4',
+      background: '#FFFDF5',
+      backgroundImage: 'linear-gradient(to right, rgba(0,0,0,0.1) 1px, transparent 1px), linear-gradient(to bottom, rgba(0,0,0,0.1) 1px, transparent 1px)',
+      backgroundSize: '34px 34px',
       color: '#000000',
       boxSizing: 'border-box',
       position: 'relative',
@@ -225,9 +267,9 @@ const Chessboard = () => {
     const badgeStyle = (color: string): React.CSSProperties => ({
       width: 12,
       height: 12,
-      borderRadius: 3,
+      borderRadius: 0,
       background: color,
-      border: color === '#fff' ? '1px solid #aaa' : '1px solid #333',
+      border: '2px solid #000000',
     });
 
 
@@ -246,6 +288,7 @@ const Chessboard = () => {
     const [pendingPromotion, setPendingPromotion] = useState<PendingPromotion | null>(null);
     // Pop-up Modal visibility state
     const [showModal, setShowModal] = useState<boolean>(false);
+    const [showHowToPlay, setShowHowToPlay] = useState(false);
 
     // Post-Game Replay Engine States
     const [activeReplay, setActiveReplay] = useState<MatchRecord | null>(null);
@@ -254,12 +297,6 @@ const Chessboard = () => {
     const [replayPositions, setReplayPositions] = useState<ReplayPosition[]>([]);
     const [currentPly, setCurrentPly] = useState<number>(-1); // -1 means initial puzzle state
     const [liveReplayScore, setLiveReplayScore] = useState<number>(0);
-    const [themeMode, setThemeMode] = useState<ThemeMode>(() => {
-      if (typeof window === 'undefined') return 'dark';
-      const isDarkMode = window.matchMedia('(prefers-color-scheme: dark)').matches;
-      return isDarkMode ? 'dark' : 'light';
-    });
-    
     const buildMoveRecords = () => moves.map(({ notation, pieceFrom, pieceTo, promotion }) => ({
       notation,
       pieceFrom,
@@ -338,7 +375,7 @@ const Chessboard = () => {
 
     const getPieceColor = (piece: string): PieceColor => piece.startsWith('white_') ? 'w' : 'b';
 
-    const headerFontFamily = '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif';
+    const headerFontFamily = '"Space Grotesk", "Segoe UI", sans-serif';
 
     const getPieceKind = (piece: string): PieceKind | null => {
       const kind = piece.split('_')[1] ?? '';
@@ -881,8 +918,8 @@ const Chessboard = () => {
     const blackStats = simulationStats.black;
     const pieceAssetsReady = usePieceAssetsReady();
     const boardStyle: React.CSSProperties = {
-      border: '4px solid rgba(255,255,255,0.08)',
-      boxShadow: '0 0 40px rgba(0,0,0,0.45)',
+      border: '4px solid #000000',
+      boxShadow: 'none',
       display: 'grid',
       gridTemplateColumns: `repeat(8, ${square}px)`,
       width: boardSize,
@@ -1232,35 +1269,13 @@ const Chessboard = () => {
     );
     const isDesktopLayout = viewportWidth >= 1100;
     const isDesktopPopupLayout = isDesktopLayout && viewportWidth < 1450;
+    const isMobileView = viewportWidth < 640;
     const desktopBoardWidth = isReplayMode
-      ? (isDesktopPopupLayout ? 500 : 620)
-      : 620;
+      ? (isDesktopPopupLayout ? 440 : 560)
+      : 460;
+    const boardColumnMaxWidth = isDesktopLayout ? `${desktopBoardWidth}px` : '500px';
     const isGameClosed = Boolean(gameData?.closesAt && Date.now() >= gameData.closesAt);
-    const theme = themeMode === 'dark'
-      ? {
-          appBg: '#F6F1E6',
-          panelBg: '#FFFFFF',
-          cardBg: '#FFFFFF',
-          textPrimary: '#0E0E0E',
-          textSecondary: '#121212',
-          textMuted: '#3B3B3B',
-          borderSoft: '#000000',
-          boardDark: '#B07C49',
-          boardLight: '#FFF7DC',
-          overlay: 'rgba(15,15,15,0.72)',
-        }
-      : {
-          appBg: '#FFFDF5',
-          panelBg: '#FFFFFF',
-          cardBg: '#FFFFFF',
-          textPrimary: '#0E0E0E',
-          textSecondary: '#121212',
-          textMuted: '#3B3B3B',
-          borderSoft: '#000000',
-          boardDark: '#B07C49',
-          boardLight: '#FFF7DC',
-          overlay: 'rgba(18,16,13,0.6)',
-        };
+    const totalPlayers = (playerCounts?.white ?? whiteStats.players ?? 0) + (playerCounts?.black ?? blackStats.players ?? 0);
 
     React.useEffect(() => {
       const onResize = () => setViewportWidth(window.innerWidth);
@@ -1269,21 +1284,10 @@ const Chessboard = () => {
     }, []);
 
     React.useEffect(() => {
-      const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
-      const syncThemeWithPreference = (event?: MediaQueryListEvent) => {
-        const prefersDark = event ? event.matches : mediaQuery.matches;
-        setThemeMode(prefersDark ? 'dark' : 'light');
-      };
-
-      syncThemeWithPreference();
-      mediaQuery.addEventListener('change', syncThemeWithPreference);
-      return () => mediaQuery.removeEventListener('change', syncThemeWithPreference);
-    }, []);
-
-    React.useEffect(() => {
       document.body.style.backgroundColor = theme.appBg;
       document.body.style.color = theme.textSecondary;
-    }, [theme.appBg, theme.textSecondary]);
+      document.documentElement.style.colorScheme = 'light';
+    }, []);
 
     React.useEffect(() => {
       if (showModal && !submitting && !refreshing && userData.hasSubmitted) {
@@ -1346,13 +1350,14 @@ const Chessboard = () => {
             alignItems: 'center',
             gap: '4px',
             marginLeft: '8px',
-            background: themeMode === 'dark' ? 'rgba(255,255,255,0.08)' : 'rgba(31,29,25,0.08)',
-            border: `1px solid ${theme.borderSoft}`,
+            background: theme.secondary,
+            border: '3px solid #000000',
             borderRadius: '999px',
-            padding: '2px 6px',
+            padding: '3px 8px',
             fontSize: '11px',
-            fontWeight: 700,
+            fontWeight: 900,
             color: theme.textPrimary,
+            boxShadow: theme.hardShadowSm,
           }}
         >
           {captures.map((piece, index) => (
@@ -1366,9 +1371,10 @@ const Chessboard = () => {
         </div>
       );
     };
-    const showOpponentPlaceholder =
+     const showOpponentPlaceholder =
       (gameMeta?.turn === 'b' && userData.userSide === 'white') ||
       (gameMeta?.turn === 'w' && userData.userSide === 'black');
+
     if (showInitialLoader) {
     return (
       <LoadingPanel
@@ -1381,19 +1387,19 @@ const Chessboard = () => {
     return (
       <div style={{
         display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
-        minHeight: '100vh', background: theme.appBg, color: theme.textSecondary, fontFamily: 'sans-serif', padding: 20
+        minHeight: '100vh', background: theme.appBg, color: theme.textSecondary, fontFamily: headerFontFamily, padding: 20
       }}>
         <div style={{
           background: theme.panelBg,
           padding: '28px',
-          borderRadius: '18px',
-          boxShadow: '0 18px 40px rgba(0,0,0,0.18)',
+          borderRadius: 0,
+          boxShadow: theme.hardShadowLg,
           maxWidth: '460px',
           width: '100%',
           textAlign: 'center',
-          border: `1px solid ${theme.borderSoft}`,
+          border: `4px solid ${theme.borderSoft}`,
         }}>
-          <h2 style={{ margin: '0 0 10px 0', color: theme.textPrimary, fontSize: '28px', fontWeight: 800 }}>Game Closed</h2>
+          <h2 style={{ margin: '0 0 10px 0', color: theme.textPrimary, fontSize: '34px', fontWeight: 900, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Game Closed</h2>
           <p style={{ margin: 0, color: theme.textMuted, fontSize: '14px', lineHeight: 1.5 }}>
             This puzzle was active for 24 hours and can no longer be played.
           </p>
@@ -1405,19 +1411,19 @@ const Chessboard = () => {
     return (
       <div style={{
         display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
-        minHeight: '100vh', background: theme.appBg, color: theme.textSecondary, fontFamily: 'sans-serif', padding: 20
+          minHeight: '100vh', background: theme.appBg, color: theme.textSecondary, fontFamily: headerFontFamily, padding: 20
       }}>
         <div style={{
           background: theme.panelBg,
           padding: '20px',
-          borderRadius: '0px',
-          boxShadow: '8px 8px 0 0 #000',
+            borderRadius: 0,
+            boxShadow: theme.hardShadowLg,
           maxWidth: '700px',
           width: '100%',
           textAlign: 'center',
-          border: `4px solid ${theme.borderSoft}`,
+            border: `4px solid ${theme.borderSoft}`,
         }}>
-          <h2 style={{ margin: '0 0 18px 0', color: theme.textPrimary, fontSize: '28px', fontWeight: 800 }}>Choose Your Side</h2>
+            <h2 style={{ margin: '0 0 18px 0', color: theme.textPrimary, fontSize: '34px', fontWeight: 900, textTransform: 'uppercase', letterSpacing: '0.07em' }}>Choose Your Side</h2>
           
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: '16px' }}>
             <button 
@@ -1428,20 +1434,22 @@ const Chessboard = () => {
                 alignItems: 'center',
                 gap: '12px',
                 padding: '22px 16px',
-                background: themeMode === 'dark' ? '#f6f0e4' : '#fffdf7',
-                border: '2px solid rgba(177, 159, 124, 0.38)',
-                borderRadius: '16px',
+                background: theme.secondary,
+                border: '4px solid #000000',
+                borderRadius: 0,
                 cursor: 'pointer',
                 fontSize: '16px',
-                fontWeight: 700,
-                color: '#262421',
-                boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.75), 0 10px 22px rgba(0,0,0,0.08)',
+                fontWeight: 900,
+                color: '#000000',
+                boxShadow: theme.hardShadowMd,
+                transform: 'rotate(-1deg)',
               }}
             >
               <div style={{
                 width: '100%',
-                borderRadius: '12px',
-                background: 'rgba(183, 198, 156, 0.55)',
+                borderRadius: 0,
+                background: theme.panelBg,
+                border: '4px solid #000000',
                 padding: '18px',
                 display: 'flex',
                 alignItems: 'center',
@@ -1454,9 +1462,9 @@ const Chessboard = () => {
                 />
               </div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', alignItems: 'center' }}>
-                <span style={{ fontSize: '12px', letterSpacing: '0.16em', textTransform: 'uppercase', color: '#706e6b' }}>White</span>
-                <span style={{ fontSize: '24px', fontWeight: 800 }}>{whitePlayerName}</span>
-                <span style={{ fontSize: '13px', color: '#706e6b' }}>{playerCounts?.white || 0} Players</span>
+                <span style={{ fontSize: '12px', letterSpacing: '0.2em', textTransform: 'uppercase', color: '#000000', fontWeight: 900 }}>White</span>
+                <span style={{ fontSize: '24px', fontWeight: 900 }}>{whitePlayerName}</span>
+                <span style={{ fontSize: '13px', color: '#000000', fontWeight: 700 }}>{playerCounts?.white || 0} Players</span>
               </div>
             </button>
 
@@ -1468,20 +1476,22 @@ const Chessboard = () => {
                 alignItems: 'center',
                 gap: '12px',
                 padding: '22px 16px',
-                background: '#1f1d1a',
-                border: '2px solid rgba(129, 182, 76, 0.28)',
-                borderRadius: '16px',
+                background: theme.muted,
+                border: '4px solid #000000',
+                borderRadius: 0,
                 cursor: 'pointer',
                 fontSize: '16px',
-                fontWeight: 700,
-                color: '#ffffff',
-                boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.08), 0 10px 22px rgba(0,0,0,0.2)',
+                fontWeight: 900,
+                color: '#000000',
+                boxShadow: theme.hardShadowMd,
+                transform: 'rotate(1deg)',
               }}
             >
               <div style={{
                 width: '100%',
-                borderRadius: '12px',
-                background: 'rgba(71, 100, 44, 0.73)',
+                borderRadius: 0,
+                background: theme.panelBg,
+                border: '4px solid #000000',
                 padding: '18px',
                 display: 'flex',
                 alignItems: 'center',
@@ -1494,12 +1504,43 @@ const Chessboard = () => {
                 />
               </div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', alignItems: 'center' }}>
-                <span style={{ fontSize: '12px', letterSpacing: '0.16em', textTransform: 'uppercase', color: '#bababa' }}>Black</span>
-                <span style={{ fontSize: '24px', fontWeight: 800 }}>{blackPlayerName}</span>
-                <span style={{ fontSize: '13px', color: '#bababa' }}>{playerCounts?.black || 0} Players</span>
+                <span style={{ fontSize: '12px', letterSpacing: '0.2em', textTransform: 'uppercase', color: '#000000', fontWeight: 900 }}>Black</span>
+                <span style={{ fontSize: '24px', fontWeight: 900 }}>{blackPlayerName}</span>
+                <span style={{ fontSize: '13px', color: '#000000', fontWeight: 700 }}>{playerCounts?.black || 0} Players</span>
               </div>
             </button>
           </div>
+        </div>
+      </div>
+    );
+  }
+    if (userData.hasSubmitted && totalPlayers <= 1) {
+    return (
+      <div style={{
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        minHeight: '100vh',
+        width: '100%',
+        background: theme.appBg,
+        padding: 20,
+        boxSizing: 'border-box',
+      }}>
+        <div style={{
+          width: '100%',
+          maxWidth: '800px',
+          background: theme.panelBg,
+          border: '4px solid #000000',
+          borderRadius: 0,
+          padding: isMobileView ? '18px 14px' : '24px',
+          textAlign: 'center',
+          color: '#000000',
+          fontSize: isMobileView ? '14px' : '18px',
+          fontWeight: 800,
+          lineHeight: 1.4,
+          fontFamily: headerFontFamily,
+        }}>
+          No one has played yet, please come back in some time to check your score!
         </div>
       </div>
     );
@@ -1509,10 +1550,10 @@ return (
   <div
     style={{
       ...appStyle,
-      fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif',
+      fontFamily: headerFontFamily,
       backgroundColor: theme.appBg,
-      backgroundImage: 'radial-gradient(#000 1px, transparent 1px)',
-      backgroundSize: '24px 24px',
+      backgroundImage: theme.appGrid,
+      backgroundSize: '34px 34px',
       color: theme.textSecondary,
       padding: isReplayMode && isDesktopLayout ? '8px 12px' : '16px',
       maxWidth: isReplayMode && isDesktopLayout ? 'min(1500px, 96vw)' : (isReplayMode ? '1080px' : '1000px'),
@@ -1523,12 +1564,55 @@ return (
       gap: isReplayMode ? '8px' : '16px',
       boxSizing: 'border-box',
       width: '100%',
+      border: '4px solid #000000',
+      boxShadow: theme.hardShadowLg,
     }}
     onMouseDown={onOutsidePointerDown}
     onTouchStart={onOutsidePointerDown}
     onTouchMove={onTouchMove}
     onTouchEnd={onTouchEnd}
   >
+    <HowToPlayDialog open={showHowToPlay} onClose={() => setShowHowToPlay(false)} />
+
+    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', width: '100%' }}>
+      <h1 style={{
+        display: 'inline-block',
+        margin: 0,
+        padding: '4px 12px',
+        background: '#FFD93D',
+        border: '4px solid #000000',
+        color: '#000000',
+        fontSize: isDesktopLayout ? '34px' : '26px',
+        fontWeight: 900,
+        textTransform: 'uppercase',
+        letterSpacing: '-0.02em',
+        transform: 'rotate(-0.5deg)',
+        lineHeight: 1,
+      }}>
+        ShadowChess
+      </h1>
+      <button
+        type="button"
+        aria-label="How to play"
+        onClick={() => setShowHowToPlay(true)}
+        style={{
+          width: '34px',
+          height: '34px',
+          border: '4px solid #000000',
+          background: '#FFFFFF',
+          color: '#000000',
+          fontSize: '16px',
+          fontWeight: 900,
+          lineHeight: 1,
+          padding: 0,
+          cursor: 'pointer',
+          borderRadius: 0,
+        }}
+      >
+        ?
+      </button>
+    </div>
+
     {/* ================= SUCCESS SCORE POP-UP OVERLAY ================= */}
     {showScoreboardLoader && (
       <LoadingPanel
@@ -1546,8 +1630,7 @@ return (
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
-          background: 'rgba(15, 15, 15, 0.52)',
-          backdropFilter: 'blur(4px)',
+          background: theme.overlay,
           padding: '20px',
         }}
       >
@@ -1557,14 +1640,14 @@ return (
             flexDirection: 'column',
             gap: '14px',
             padding: '18px',
-            borderRadius: '16px',
-            background: 'rgba(24, 23, 20, 0.98)',
-            border: '1px solid rgba(129, 182, 76, 0.35)',
-            boxShadow: '0 14px 32px rgba(0,0,0,0.45)',
+            borderRadius: 0,
+            background: theme.appBg,
+            border: '4px solid #000000',
+            boxShadow: theme.hardShadowLg,
             minWidth: 'min(320px, 92vw)',
           }}
         >
-          <div style={{ textAlign: 'center', color: '#f5f1e8', fontSize: '18px', fontWeight: 800 }}>
+          <div style={{ textAlign: 'center', color: '#000000', fontSize: '18px', fontWeight: 900, textTransform: 'uppercase', letterSpacing: '0.08em' }}>
             Choose promotion
           </div>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '8px' }}>
@@ -1581,12 +1664,13 @@ return (
                     justifyContent: 'center',
                     width: '60px',
                     height: '60px',
-                    borderRadius: '12px',
-                    border: '1px solid rgba(255,255,255,0.12)',
-                    background: 'rgba(255,255,255,0.06)',
+                    borderRadius: 0,
+                    border: '3px solid #000000',
+                    background: '#C4B5FD',
                     cursor: 'pointer',
                     padding: 0,
                     margin: '0 auto',
+                    boxShadow: theme.hardShadowSm,
                   }}
                 >
                   <img
@@ -1605,34 +1689,10 @@ return (
     {isReplayMode && (
       <div style={{
         width: '100%',
-        display: 'flex',
-        flexDirection: 'column',
-        gap: '10px',
+        display: 'grid',
+        gridTemplateColumns: 'repeat(3, 1fr)',
+        gap: '6px',
       }}>
-        <div style={{ textAlign: 'center' }}>
-          <h1 style={{
-            margin: 0,
-            display: 'inline-block',
-            background: '#FFD93D',
-            border: '4px solid #000',
-            boxShadow: '4px 4px 0 0 #000',
-            padding: '6px 16px',
-            fontSize: '34px',
-            fontWeight: 900,
-            lineHeight: 1,
-            textTransform: 'uppercase',
-            letterSpacing: '-0.04em',
-            transform: 'rotate(-0.6deg)',
-            color: '#000',
-          }}>
-            ShadowChess
-          </h1>
-        </div>
-        <div style={{
-          display: 'grid',
-          gridTemplateColumns: 'repeat(3, 1fr)',
-          gap: '6px',
-        }}>
         <button
           type="button"
           onClick={() => {
@@ -1644,15 +1704,17 @@ return (
             setSimulationTab('score');
           }}
           style={{
-            border: '3px solid #000',
-            background: simulationTab === 'score' ? '#FFD93D' : '#FFFFFF',
-            color: '#000',
-            borderRadius: '0px',
-            padding: '8px 8px',
+            border: '4px solid #000000',
+            background: simulationTab === 'score' ? theme.accent : theme.panelBg,
+            color: '#000000',
+            borderRadius: 0,
+            padding: '10px 8px',
             fontSize: '12px',
-            fontWeight: 800,
+            fontWeight: 900,
+            textTransform: 'uppercase',
+            letterSpacing: '0.06em',
             cursor: 'pointer',
-            boxShadow: simulationTab === 'score' ? '3px 3px 0 0 #000' : 'none',
+            boxShadow: simulationTab === 'score' ? theme.hardShadowSm : 'none',
           }}
         >
           Score
@@ -1670,15 +1732,17 @@ return (
             if (userData.bestMatch) loadReplayGame(userData.bestMatch);
           }}
           style={{
-            border: '3px solid #000',
-            background: simulationTab === 'best' ? '#C4B5FD' : '#FFFFFF',
-            color: '#000',
-            borderRadius: '0px',
-            padding: '8px 8px',
+            border: '4px solid #000000',
+            background: simulationTab === 'best' ? theme.secondary : theme.panelBg,
+            color: '#000000',
+            borderRadius: 0,
+            padding: '10px 8px',
             fontSize: '12px',
-            fontWeight: 800,
+            fontWeight: 900,
+            textTransform: 'uppercase',
+            letterSpacing: '0.06em',
             cursor: 'pointer',
-            boxShadow: simulationTab === 'best' ? '3px 3px 0 0 #000' : 'none',
+            boxShadow: simulationTab === 'best' ? theme.hardShadowSm : 'none',
           }}
         >
           Best Game
@@ -1696,20 +1760,21 @@ return (
             if (userData.worstMatch) loadReplayGame(userData.worstMatch);
           }}
           style={{
-            border: '3px solid #000',
-            background: simulationTab === 'worst' ? '#FF6B6B' : '#FFFFFF',
-            color: '#000',
-            borderRadius: '0px',
-            padding: '8px 8px',
+            border: '4px solid #000000',
+            background: simulationTab === 'worst' ? theme.muted : theme.panelBg,
+            color: '#000000',
+            borderRadius: 0,
+            padding: '10px 8px',
             fontSize: '12px',
-            fontWeight: 800,
+            fontWeight: 900,
+            textTransform: 'uppercase',
+            letterSpacing: '0.06em',
             cursor: 'pointer',
-            boxShadow: simulationTab === 'worst' ? '3px 3px 0 0 #000' : 'none',
+            boxShadow: simulationTab === 'worst' ? theme.hardShadowSm : 'none',
           }}
         >
           Worst Game
         </button>
-        </div>
       </div>
     )}
 
@@ -1717,17 +1782,19 @@ return (
     {!isScoreOnlyTab && (
     <div style={{
       width: '100%',
-      maxWidth: isReplayMode ? '1080px' : '1000px',
-      background: theme.cardBg,
-      padding: isReplayMode ? '5px 10px' : '6px 16px',
-      borderRadius: '6px',
-      fontSize: isReplayMode ? '12px' : '13px',
+      maxWidth: boardColumnMaxWidth,
+      margin: '0 auto',
+      background: theme.panelBg,
+      padding: isReplayMode ? '5px 10px' : '8px 12px',
+      borderRadius: 0,
+      fontSize: isReplayMode ? '12px' : '14px',
       display: 'flex',
       alignItems: 'center',
       gap: '8px',
       overflowX: 'auto',
       whiteSpace: 'nowrap',
-      border: `1px solid ${theme.borderSoft}`,
+      border: '4px solid #000000',
+      boxShadow: theme.hardShadowMd,
       boxSizing: 'border-box',
       color: theme.textPrimary
     }}>
@@ -1735,7 +1802,7 @@ return (
 
       {isReplayMode ? (
         <>
-          <span style={{ color: '#81b64c', fontWeight: 600, marginRight: '8px' }}>
+          <span style={{ color: theme.accent, fontWeight: 600, marginRight: '8px' }}>
             vs u/{activeReplay?.opponent}
           </span>
           {moves.length > 0 ? moves.map((m, idx) => (
@@ -1782,13 +1849,13 @@ return (
     )}
 
     {isScoreOnlyTab && (
-  <div style={{
-    width: '100%',
-    background: 'rgba(23, 23, 23, 0.95)',
-    border: '2px solid rgba(212,167,44,0.55)',
-    borderRadius: '12px',
-    boxShadow: '0 8px 32px rgba(0,0,0,0.5)',
-    fontFamily: '"Oswald", sans-serif',
+    <div style={{
+      width: '100%',
+      background: theme.panelBg,
+      border: '4px solid #000000',
+      borderRadius: 0,
+      boxShadow: theme.hardShadowLg,
+      fontFamily: headerFontFamily,
     display: 'flex',
     flexDirection: 'column',
     overflow: 'hidden',
@@ -1800,7 +1867,7 @@ return (
       
       {/* Left 'White' Team Card */}
 <div style={{ 
-  background: 'rgba(71, 100, 44, 0.73)', 
+  background: theme.secondary, 
   
   color: '#000', 
   display: 'flex', 
@@ -1817,21 +1884,20 @@ return (
 
 
       {/* Center Scores and Names */}
-      <div style={{ background: '#111', color: '#fff', display: 'flex', flexDirection: 'column' }}>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', padding: '12px 20px', textAlign: 'center', fontSize: '16px', fontWeight: 700, color: '#aaa', textTransform: 'uppercase' }}>
+      <div style={{ background: theme.panelBg, color: '#000000', display: 'flex', flexDirection: 'column', borderLeft: '4px solid #000', borderRight: '4px solid #000' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', padding: isMobileView ? '8px 10px' : '12px 20px', textAlign: 'center', fontSize: isMobileView ? '12px' : '16px', fontWeight: 900, color: '#000000', textTransform: 'uppercase', letterSpacing: isMobileView ? '0.04em' : '0.08em', borderBottom: '4px solid #000' }}>
           <div>White</div>
           <div>Black</div>
         </div>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', padding: '10px 20px', alignItems: 'center' }}>
-          <div style={{ textAlign: 'center', fontSize: '82px', fontWeight: 900 }}>{whiteStats.totalScore}</div>
-          <div style={{ textAlign: 'center', fontSize: '82px', fontWeight: 900 }}>{blackStats.totalScore}</div>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', padding: isMobileView ? '8px 10px' : '10px 20px', alignItems: 'center' }}>
+          <div style={{ textAlign: 'center', fontSize: isMobileView ? '34px' : '48px', fontWeight: 900 }}>{whiteStats.totalScore}</div>
+          <div style={{ textAlign: 'center', fontSize: isMobileView ? '34px' : '48px', fontWeight: 900 }}>{blackStats.totalScore}</div>
         </div>
       </div>
 
       {/* Right 'Black' Team Card */}
       <div style={{ 
-        
-        background: 'rgba(71, 100, 44, 0.73)', 
+        background: theme.muted, 
         
         color: '#000', 
         display: 'flex', 
@@ -1848,7 +1914,7 @@ return (
     </div>
 
     {/* Details Section (Metrics list) */}
-    <div style={{ background: '#222', color: '#eee', fontSize: '16px' }}>
+    <div style={{ background: theme.appBg, color: '#000000', fontSize: isMobileView ? '13px' : '16px', borderTop: '4px solid #000' }}>
       
       {/* Row Helper Component */}
       {[
@@ -1861,49 +1927,48 @@ return (
           gridTemplateColumns: '1fr 1.5fr 1fr', 
           alignItems: 'center', 
           textAlign: 'center',
-          borderTop: '1px solid #333'
+          borderTop: '4px solid #000'
         }}>
-          <div style={{ padding: '16px 20px', fontSize: '24px', fontWeight: 700, color: '#fff' }}>{stat.white}</div>
+          <div style={{ padding: isMobileView ? '10px 10px' : '16px 20px', fontSize: isMobileView ? '18px' : '24px', fontWeight: 900, color: '#000' }}>{stat.white}</div>
           <div style={{ 
-            padding: '12px 20px', 
-            background: `${stat.accent}22`, 
-            color: stat.accent,
-            fontWeight: 800, 
-            textTransform: 'none',
+            padding: isMobileView ? '8px 8px' : '12px 20px', 
+            background: stat.label === 'Players' ? theme.secondary : (stat.label === 'Illegal moves' ? theme.accent : theme.muted),
+            color: '#000000',
+            fontWeight: 900, 
             letterSpacing: '0.4px',
-            fontSize: '16px',
+            fontSize: isMobileView ? '11px' : '16px',
             height: '100%',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
-            borderLeft: `1px solid ${stat.accent}55`,
-            borderRight: `1px solid ${stat.accent}55`,
+            borderLeft: '4px solid #000000',
+            borderRight: '4px solid #000000',
           }}>{stat.label}</div>
-          <div style={{ padding: '16px 20px', fontSize: '24px', fontWeight: 700, color: '#fff' }}>{stat.black}</div>
+          <div style={{ padding: isMobileView ? '10px 10px' : '16px 20px', fontSize: isMobileView ? '18px' : '24px', fontWeight: 900, color: '#000' }}>{stat.black}</div>
         </div>
       ))}
     </div>
 
     {/* Separate User Score Section at Bottom */}
     <div style={{
-      background: 'rgba(255, 255, 255, 0.04)',
-      padding: '20px',
-      borderTop: '2px solid rgba(212,167,44,0.35)',
+      background: '#FFD93D',
+      padding: isMobileView ? '12px' : '20px',
+      borderTop: '4px solid #000000',
       textAlign: 'center',
       marginTop: 'auto',
-      borderRadius: '0 0 12px 12px'
+      borderRadius: 0
     }}>
       <div style={{
-        color: '#f2c94c',
-        fontSize: '16px',
-        fontWeight: 600,
+        color: '#000000',
+        fontSize: isMobileView ? '12px' : '16px',
+        fontWeight: 900,
         textTransform: 'uppercase',
-        letterSpacing: '1px',
+        letterSpacing: '0.2em',
         marginBottom: '4px'
       }}>Your Score</div>
       <div style={{
-        color: '#fff',
-        fontSize: '44px',
+        color: '#000000',
+        fontSize: isMobileView ? '26px' : '32px',
         fontWeight: 900
       }}>{userData?.score ?? 0}</div>
     </div>
@@ -1919,7 +1984,7 @@ return (
       gap: isReplayMode ? '8px' : '16px', 
       width: '100%', 
       justifyContent: 'center',
-      alignItems: 'flex-start'
+      alignItems: 'center'
     }}>
       
       {/* LEFT SIDE: BOARDS & PLAYERS */}
@@ -1934,7 +1999,8 @@ return (
         display: 'flex', 
         flexDirection: 'column', 
         gap: isReplayMode ? '6px' : '8px',
-        margin: isReplayMode ? '0 auto' : undefined,
+        margin: '0 auto',
+        boxSizing: 'border-box',
       }}>
         
         {/* BLOCK 1: OPPONENT/TOP PLAYER PANEL */}
@@ -1943,9 +2009,12 @@ return (
           justifyContent: 'space-between', 
           alignItems: 'center', 
           padding: '8px 12px', 
-          background: theme.panelBg, 
-          borderRadius: '6px',
-          border: `1px solid ${theme.borderSoft}`,
+          background: theme.panelBg,
+          borderRadius: 0,
+          border: '4px solid #000000',
+          boxShadow: theme.hardShadowSm,
+          width: '100%',
+          boxSizing: 'border-box',
           fontSize: '14px',
           color: theme.textPrimary
         }}>
@@ -1958,7 +2027,7 @@ return (
             </span>
           </div>
           {isReplayMode && (
-            <div style={{ fontSize: '12px', fontWeight: 700, color: '#81b64c' }}>
+            <div style={{ fontSize: '12px', fontWeight: 900, color: '#000000', background: theme.secondary, border: '2px solid #000', padding: '2px 6px' }}>
               {displayedOpponentScore} pts
             </div>
           )}
@@ -1971,16 +2040,18 @@ return (
             ...boardStyle,
             width: '100%',
             height: 'auto',
-            maxWidth: isDesktopLayout ? `${desktopBoardWidth}px` : undefined,
+            maxWidth: boardColumnMaxWidth,
             aspectRatio: '1 / 1',
             display: 'grid',
             gridTemplateColumns: 'repeat(8, 1fr)',
             gridTemplateRows: 'repeat(8, 1fr)',
-            boxShadow: '0 8px 24px rgba(0,0,0,0.5)',
-            borderRadius: '4px',
+            borderRadius: 0,
+            border: '4px solid #000000',
+            boxShadow: 'none',
+            boxSizing: 'border-box',
             overflow: 'hidden',
             position: 'relative',
-            margin: isReplayMode && isDesktopLayout ? '0 auto' : undefined,
+            margin: '0 auto',
           }} 
           onDragOver={userData.hasSubmitted ? undefined : onBoardDragOver} 
           onDrop={userData.hasSubmitted ? undefined : onBoardDrop}
@@ -2011,18 +2082,18 @@ return (
             const bg = isDark ? theme.boardDark : theme.boardLight;
             const piece = board[i];
             const isReplayHighlightedSquare = i === replayHighlightFrom || i === replayHighlightTo;
-            const labelColor = isDark ? 'rgba(244, 239, 228, 0.9)' : 'rgba(34, 32, 29, 0.78)';
+            const neoLabelColor = isDark ? '#FFFDF5' : '#000000';
             const isBlackView = userData.userSide === 'black';
             const showRankLabel = isBlackView ? col === 7 : col === 0;
             const showFileLabel = isBlackView ? row === 0 : row === 7;
             const rankLabel = String(isBlackView ? 8 - row : row + 1);
             const fileLabel = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'][col] ?? '';
             const rankLabelStyle: React.CSSProperties = isBlackView
-              ? { position: 'absolute', right: 5, bottom: 4, fontSize: '9px', fontWeight: 800, color: labelColor, lineHeight: 1, transform: 'rotate(180deg)' }
-              : { position: 'absolute', top: 4, left: 5, fontSize: '9px', fontWeight: 800, color: labelColor, lineHeight: 1 };
+              ? { position: 'absolute', right: 5, bottom: 4, fontSize: '10px', fontWeight: 900, color: neoLabelColor, lineHeight: 1, transform: 'rotate(180deg)' }
+              : { position: 'absolute', top: 4, left: 5, fontSize: '10px', fontWeight: 900, color: neoLabelColor, lineHeight: 1 };
             const fileLabelStyle: React.CSSProperties = isBlackView
-              ? { position: 'absolute', top: 4, left: 5, fontSize: '9px', fontWeight: 800, color: labelColor, lineHeight: 1, textTransform: 'lowercase', transform: 'rotate(180deg)' }
-              : { position: 'absolute', right: 5, bottom: 4, fontSize: '9px', fontWeight: 800, color: labelColor, lineHeight: 1, textTransform: 'lowercase' };
+              ? { position: 'absolute', top: 4, left: 5, fontSize: '10px', fontWeight: 900, color: neoLabelColor, lineHeight: 1, textTransform: 'lowercase', transform: 'rotate(180deg)' }
+              : { position: 'absolute', right: 5, bottom: 4, fontSize: '10px', fontWeight: 900, color: neoLabelColor, lineHeight: 1, textTransform: 'lowercase' };
             
             return (
               <div
@@ -2063,9 +2134,7 @@ return (
                   height: '100%',
                   outline: isReplayHighlightedSquare ? '3px solid rgba(212, 167, 44, 0.95)' : undefined,
                   outlineOffset: isReplayHighlightedSquare ? '-3px' : undefined,
-                  boxShadow: isReplayHighlightedSquare
-                    ? 'inset 0 0 24px rgba(255, 221, 118, 0.42), 0 0 12px rgba(255, 221, 118, 0.16)'
-                    : undefined,
+                  boxShadow: 'none',
                   fontFamily: headerFontFamily,
                 }}
               >
@@ -2122,9 +2191,12 @@ return (
           justifyContent: 'space-between', 
           alignItems: 'center', 
           padding: '8px 12px', 
-          background: theme.panelBg, 
-          borderRadius: '6px',
-          border: `1px solid ${theme.borderSoft}`,
+          background: theme.panelBg,
+          borderRadius: 0,
+          border: '4px solid #000000',
+          boxShadow: theme.hardShadowSm,
+          width: '100%',
+          boxSizing: 'border-box',
           fontSize: '14px',
           color: theme.textPrimary
         }}>
@@ -2136,7 +2208,7 @@ return (
               ({userData.userSide === 'black' ? 'Black' : 'White'})
             </span>
           </div>
-          <div style={{ fontSize: '12px', fontWeight: 700, color: '#81b64c' }}>
+          <div style={{ fontSize: '12px', fontWeight: 900, color: '#000000', background: theme.accent, border: '2px solid #000', padding: '2px 6px' }}>
             {displayedUserScore} pts
           </div>
         </div>
@@ -2156,13 +2228,13 @@ return (
               style={{
                 width: '44px',
                 height: '44px',
-                borderRadius: '8px',
-                border: 'none',
-                background: isAtReplayStart ? 'rgba(129,182,76,0.35)' : 'linear-gradient(135deg, #8fc75a, #70a73f)',
-                color: '#ffffff',
+                borderRadius: 0,
+                border: '4px solid #000000',
+                background: isAtReplayStart ? theme.panelBg : theme.accent,
+                color: '#000000',
                 cursor: isAtReplayStart ? 'not-allowed' : 'pointer',
                 opacity: isAtReplayStart ? 0.55 : 1,
-                boxShadow: isAtReplayStart ? 'none' : '0 6px 16px rgba(129,182,76,0.35)',
+                boxShadow: isAtReplayStart ? 'none' : theme.hardShadowSm,
                 fontSize: '18px',
                 fontWeight: 900,
                 display: 'inline-flex',
@@ -2180,14 +2252,15 @@ return (
               minWidth: '130px',
               textAlign: 'center',
               fontSize: '12px',
-              fontWeight: 700,
+              fontWeight: 900,
               color: theme.textPrimary,
-              letterSpacing: '0.04em',
+              letterSpacing: '0.08em',
               textTransform: 'uppercase',
-              background: theme.cardBg,
-              border: `1px solid ${theme.borderSoft}`,
-              borderRadius: '999px',
+              background: theme.panelBg,
+              border: '4px solid #000000',
+              borderRadius: 0,
               padding: '8px 12px',
+              boxShadow: theme.hardShadowSm,
               justifySelf: 'center',
             }}>
               Move {Math.max(currentPly + 1, 0)}
@@ -2204,13 +2277,13 @@ return (
               style={{
                 width: '44px',
                 height: '44px',
-                borderRadius: '8px',
-                border: 'none',
-                background: isAtReplayEnd ? 'rgba(129,182,76,0.35)' : 'linear-gradient(135deg, #8fc75a, #70a73f)',
-                color: '#ffffff',
+                borderRadius: 0,
+                border: '4px solid #000000',
+                background: isAtReplayEnd ? theme.panelBg : theme.accent,
+                color: '#000000',
                 cursor: isAtReplayEnd ? 'not-allowed' : 'pointer',
                 opacity: isAtReplayEnd ? 0.55 : 1,
-                boxShadow: isAtReplayEnd ? 'none' : '0 6px 16px rgba(129,182,76,0.35)',
+                boxShadow: isAtReplayEnd ? 'none' : theme.hardShadowSm,
                 fontSize: '18px',
                 fontWeight: 900,
                 display: 'inline-flex',
@@ -2227,43 +2300,8 @@ return (
           </div>
         )}
 
-      </div>
 
-      {!userData.hasSubmitted && (
-      <div style={{ 
-        flex: '1 1 280px',
-        maxWidth: '500px',
-        width: '100%',
-        display: 'flex', 
-        flexDirection: 'column', 
-        gap: '8px',
-        background: theme.panelBg, 
-        padding: '16px', 
-        borderRadius: '8px',
-        boxShadow: '0 6px 18px rgba(0,0,0,0.3)',
-        color: theme.textSecondary,
-        boxSizing: 'border-box',
-        border: `1px solid ${theme.borderSoft}`
-      }}>
-          <div style={{
-            background: 'rgba(255,255,255,0.03)',
-            borderRadius: '6px',
-            padding: '10px 12px',
-            border: `1px solid ${theme.borderSoft}`,
-          }}>
-            <div style={{ fontSize: '11px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '6px', color: theme.textMuted }}>
-              Move Progress
-            </div>
-            <div style={{ fontSize: '24px', fontWeight: 800, color: theme.textPrimary, lineHeight: 1.2 }}>
-              Move: {Math.min(moves.length + 1, 5)}/5
-            </div>
-            <div style={{ fontSize: '12px', marginTop: '6px', color: theme.textMuted }}>
-              Your game auto-submits after move 5.
-            </div>
-          </div>
       </div>
-      )}
-
     </div>
     )}
 

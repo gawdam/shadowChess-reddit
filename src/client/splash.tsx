@@ -4,6 +4,7 @@ import { requestExpandedMode } from '@devvit/web/client';
 import { StrictMode, useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { useCounter } from './hooks/useCounter';
+import { HowToPlayDialog } from './howToPlayDialog';
 
 const allPieceAssets = [
   'white_pawn',
@@ -99,17 +100,18 @@ export const Splash = () => {
   const { loading, gameData, userData, simulationStats, playerCounts, leaderboards } = useCounter();
   const pieceAssetsReady = usePieceAssetsReady();
   const [now, setNow] = useState(() => Date.now());
+  const [submittedView, setSubmittedView] = useState<'scorecard' | 'leaderboard'>('scorecard');
+  const [showHowToPlay, setShowHowToPlay] = useState(false);
   const board = gameData ? parseFEN(gameData.fen) : Array(64).fill(null);
-  const whiteName = gameData?.meta.white ?? 'White';
-  const blackName = gameData?.meta.black ?? 'Black';
-  const turnLabel = gameData?.turn === 'b' ? 'Black to play' : 'White to play';
   const showBoardLoader = loading || !pieceAssetsReady || !gameData;
   const closesAt = gameData?.closesAt ?? null;
   const remainingMs = closesAt ? Math.max(0, closesAt - now) : 0;
   const isGameClosed = Boolean(closesAt && remainingMs <= 0);
   const remainingHours = Math.floor(remainingMs / (60 * 60 * 1000));
   const remainingMinutes = Math.floor((remainingMs % (60 * 60 * 1000)) / (60 * 1000));
-  const countdownLabel = `${String(remainingHours).padStart(2, '0')}:${String(remainingMinutes).padStart(2, '0')}`;
+  const countdownLabel = remainingHours > 0 
+  ? `${remainingHours} hour${remainingHours === 1 ? '' : 's'}` 
+  : `${remainingMinutes} min${remainingMinutes === 1 ? '' : 's'}`;
   const whiteStats = simulationStats.white;
   const blackStats = simulationStats.black;
 
@@ -157,101 +159,170 @@ export const Splash = () => {
 
   if (userData.hasSubmitted) {
     return (
-      <div className="flex flex-col items-center justify-center min-h-screen w-full bg-[#FFFDF5] text-black p-3 select-none font-sans"
-           style={{ backgroundImage: 'radial-gradient(#000 1px, transparent 1px)', backgroundSize: '24px 24px' }}>
-        
-        <div className="w-full max-w-xl bg-white border-4 border-black rounded-none p-3 shadow-[8px_8px_0px_0px_#000] flex flex-col gap-3">
-          
-          {/* Header Block */}
-          <div className="text-center border-b-2 border-black pb-2 relative">
-            <h1 className="text-3xl font-black tracking-tighter uppercase text-black rotate-[-0.5deg] inline-block bg-[#FFD93D] px-4 py-0.5 border-4 border-black shadow-[4px_4px_0px_0px_#000]">
-              ShadowChess
-            </h1>
-            <p className="text-[10px] tracking-widest uppercase font-bold text-black mt-2">Game Over • Performance Summary</p>
+      <div
+        className="flex flex-col items-center justify-center h-screen w-full bg-[#FFFDF5] text-black p-2 select-none font-sans overflow-hidden text-[11px] sm:text-xs md:text-sm"
+        style={{ backgroundImage: 'radial-gradient(#000 1px, transparent 1px)', backgroundSize: '24px 24px' }}
+      >
+        <HowToPlayDialog open={showHowToPlay} onClose={() => setShowHowToPlay(false)} />
+        <div className="w-full max-w-5xl max-h-[94vh] bg-white border-4 border-black rounded-none p-2 shadow-[8px_8px_0px_0px_#000] flex flex-col gap-2 overflow-hidden">
+          <div className="text-center border-b-2 border-black pb-1 relative">
+            <div className="flex items-center justify-center gap-2">
+              <h1 className="text-xl sm:text-2xl font-black tracking-tighter uppercase text-black rotate-[-0.5deg] inline-block bg-[#FFD93D] px-3 py-0.5 border-4 border-black shadow-[4px_4px_0px_0px_#000]">
+                ShadowChess
+              </h1>
+              <button
+                type="button"
+                aria-label="How to play"
+                onClick={() => setShowHowToPlay(true)}
+                className="w-8 h-8 border-4 border-black rounded-none bg-white text-black font-black text-sm leading-none shadow-[3px_3px_0px_0px_#000] active:translate-x-[3px] active:translate-y-[3px] active:shadow-none"
+              >
+                ?
+              </button>
+            </div>
+            <p className="text-[9px] tracking-widest uppercase font-bold text-black mt-1">Game Over • Performance Summary</p>
           </div>
 
-          {/* Side-by-Side Main Split: Scoreboard Left, Leaderboards Right */}
-          <div className="grid grid-cols-1 md:grid-cols-5 gap-3 items-stretch">
-            
-            {/* Left Side: Scoreboard & Micro Stats */}
-            <div className="md:col-span-2 border-4 border-black rounded-none bg-white overflow-hidden shadow-[4px_4px_0px_0px_#000] flex flex-col justify-between">
-              <div className="grid grid-cols-3 border-b-2 border-black text-center items-center bg-[#C4B5FD] divide-x-2 divide-black">
-                <div className="p-1.5 flex flex-col items-center justify-center bg-white">
-                  <img src="/pieces/white_king.png" alt="White" className="h-6 w-6 object-contain" />
-                  <span className="text-[9px] font-bold mt-0.5">White</span>
-                  <span className="text-sm font-black text-black">{whiteStats.totalScore}</span>
-                </div>
-                <div className="p-1.5 flex flex-col items-center justify-center bg-[#FFD93D]">
-                  <span className="text-[8px] font-bold text-black whitespace-nowrap">Your score</span>
-                  <span className="text-base font-black text-black">{userData.score ?? 0}</span>
-                </div>
-                <div className="p-1.5 flex flex-col items-center justify-center bg-white">
-                  <img src="/pieces/black_king.png" alt="Black" className="h-6 w-6 object-contain" />
-                  <span className="text-[9px] font-bold mt-0.5">Black</span>
-                  <span className="text-sm font-black text-black">{blackStats.totalScore}</span>
-                </div>
-              </div>
+          <div className="flex items-center justify-center gap-2">
+            <button
+              type="button"
+              onClick={() => setSubmittedView('scorecard')}
+              className={`rounded-none border-4 border-black px-3 py-1 text-[10px] font-black tracking-wide shadow-[3px_3px_0px_0px_#000] active:translate-x-[3px] active:translate-y-[3px] active:shadow-none ${submittedView === 'scorecard' ? 'bg-[#FFD93D] text-black' : 'bg-white text-black'}`}
+            >
+              Scorecard
+            </button>
+            <button
+              type="button"
+              onClick={() => setSubmittedView('leaderboard')}
+              className={`rounded-none border-4 border-black px-3 py-1 text-[10px] font-black tracking-wide shadow-[3px_3px_0px_0px_#000] active:translate-x-[3px] active:translate-y-[3px] active:shadow-none ${submittedView === 'leaderboard' ? 'bg-[#FFD93D] text-black' : 'bg-white text-black'}`}
+            >
+              Leaderboard
+            </button>
+          </div>
 
-              {/* Match Stats */}
-              <div className="divide-y-2 divide-black text-[10px] font-bold bg-white flex-grow flex flex-col justify-around">
-                {[
-                  { label: 'Active players', white: playerCounts?.white ?? 0, black: playerCounts?.black ?? 0 },
-                  { label: 'Illegal moves', white: whiteStats.illegalMoves, black: blackStats.illegalMoves },
-                  { label: 'Piece captures', white: whiteStats.captures, black: blackStats.captures },
-                ].map((stat) => (
-                  <div key={stat.label} className="grid grid-cols-3 items-center text-center py-1 px-1">
-                    <span className="font-black text-black">{stat.white}</span>
-                    <span className="text-[8px] font-bold bg-slate-100 border-x border-black py-0.5 text-ellipsis overflow-hidden whitespace-nowrap">{stat.label}</span>
-                    <span className="font-black text-black">{stat.black}</span>
+          {submittedView === 'scorecard' ? (
+            <div className="w-full flex items-center justify-center">
+              <div className="w-full max-w-[620px]">
+                <div
+                  style={{
+                    width: '100%',
+                    background: '#FFFFFF',
+                    border: '4px solid #000000',
+                    borderRadius: 0,
+                    boxShadow: '8px 8px 0px 0px #000000',
+                    fontFamily: 'system-ui, sans-serif',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    overflow: 'hidden',
+                  }}
+                >
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr 1fr', alignItems: 'stretch' }}>
+                    <div style={{ background: '#FFD93D', color: '#000', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '8px' }}>
+                      <img src="/pieces/white_king.png" alt="White king" style={{ width: '40px', height: '40px', objectFit: 'contain' }} />
+                    </div>
+
+                    <div style={{ background: '#FFFFFF', color: '#000000', display: 'flex', flexDirection: 'column', borderLeft: '4px solid #000', borderRight: '4px solid #000' }}>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', padding: '6px 10px', textAlign: 'center', fontSize: '11px', fontWeight: 900, color: '#000000', textTransform: 'uppercase', letterSpacing: '0.08em', borderBottom: '4px solid #000' }}>
+                        <div>White</div>
+                        <div>Black</div>
+                      </div>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', padding: '4px 8px', alignItems: 'center' }}>
+                        <div style={{ textAlign: 'center', fontSize: '42px', fontWeight: 900 }}>{whiteStats.totalScore}</div>
+                        <div style={{ textAlign: 'center', fontSize: '42px', fontWeight: 900 }}>{blackStats.totalScore}</div>
+                      </div>
+                    </div>
+
+                    <div style={{ background: '#C4B5FD', color: '#000', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '8px' }}>
+                      <img src="/pieces/black_king.png" alt="Black king" style={{ width: '40px', height: '40px', objectFit: 'contain' }} />
+                    </div>
                   </div>
-                ))}
+
+                  <div style={{ background: '#FFFDF5', color: '#000000', fontSize: '14px', borderTop: '4px solid #000' }}>
+                    {[
+                      { label: 'Players', white: playerCounts?.white ?? 0, black: playerCounts?.black ?? 0 },
+                      { label: 'Illegal moves', white: whiteStats.illegalMoves, black: blackStats.illegalMoves },
+                      { label: 'Captures', white: whiteStats.captures, black: blackStats.captures },
+                    ].map((stat, i) => (
+                      <div key={i} style={{ display: 'grid', gridTemplateColumns: '1fr 1.5fr 1fr', alignItems: 'center', textAlign: 'center', borderTop: '4px solid #000' }}>
+                        <div style={{ padding: '6px 8px', fontSize: '14px', fontWeight: 900, color: '#000' }}>{stat.white}</div>
+                        <div
+                          style={{
+                            padding: '6px 8px',
+                            background: stat.label === 'Players' ? '#FFD93D' : (stat.label === 'Illegal moves' ? '#FF6B6B' : '#C4B5FD'),
+                            color: '#000000',
+                            fontWeight: 900,
+                            letterSpacing: '0.4px',
+                            fontSize: '10px',
+                            height: '100%',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            borderLeft: '4px solid #000000',
+                            borderRight: '4px solid #000000',
+                          }}
+                        >
+                          {stat.label}
+                        </div>
+                        <div style={{ padding: '6px 8px', fontSize: '14px', fontWeight: 900, color: '#000' }}>{stat.black}</div>
+                      </div>
+                    ))}
+                  </div>
+
+                  <div style={{ background: '#FFD93D', padding: '8px', borderTop: '4px solid #000000', textAlign: 'center', marginTop: 'auto', borderRadius: 0 }}>
+                    <div style={{ color: '#000000', fontSize: '11px', fontWeight: 900, textTransform: 'uppercase', letterSpacing: '0.2em', marginBottom: '4px' }}>
+                      Your Score
+                    </div>
+                    <div style={{ color: '#000000', fontSize: '28px', fontWeight: 900 }}>{userData.score ?? 0}</div>
+                  </div>
+                </div>
               </div>
             </div>
-
-            {/* Right Side: Split Leaderboards */}
-            <div className="md:col-span-3 grid grid-cols-2 gap-2">
+          ) : (
+            <div className="w-full max-w-[780px] grid grid-cols-2 gap-2">
               <div className="border-4 border-black rounded-none bg-white p-1.5 shadow-[4px_4px_0px_0px_#000] flex flex-col justify-between">
-                <div className="text-[9px] font-bold text-center bg-black text-white py-0.5">
-                  Leaderboard (White)
-                </div>
+                <div className="text-[9px] font-bold text-center bg-black text-white py-0.5">Leaderboard (White)</div>
                 {renderNeoPodium(leaderboards.white.top, 'No scores recorded')}
               </div>
-              
               <div className="border-4 border-black rounded-none bg-white p-1.5 shadow-[4px_4px_0px_0px_#000] flex flex-col justify-between">
-                <div className="text-[9px] font-bold text-center bg-black text-white py-0.5">
-                  Leaderboard (Black)
-                </div>
+                <div className="text-[9px] font-bold text-center bg-black text-white py-0.5">Leaderboard (Black)</div>
                 {renderNeoPodium(leaderboards.black.top, 'No scores recorded')}
               </div>
             </div>
+          )}
 
-          </div>
-
-          {/* Compact Action Bar */}
           <div className="flex justify-center mt-0.5">
             <button
-              className="w-full py-2 px-4 rounded-none bg-[#FF6B6B] border-4 border-black text-xs font-bold text-black tracking-wide shadow-[4px_4px_0px_0px_#000] transition-all duration-100 active:translate-x-[4px] active:translate-y-[4px] active:shadow-none"
+              className="w-full py-2 px-4 rounded-none bg-[#FF6B6B] border-4 border-black text-[11px] sm:text-xs font-bold text-black tracking-wide shadow-[4px_4px_0px_0px_#000] transition-all duration-100 active:translate-x-[4px] active:translate-y-[4px] active:shadow-none"
               onClick={(e) => requestExpandedMode(e.nativeEvent, 'game')}
             >
               View my game board
             </button>
           </div>
-
         </div>
       </div>
     );
   }
 
   return (
-    <div className="flex flex-col justify-center items-center min-h-screen w-full bg-[#FFFDF5] text-black p-4 select-none font-sans"
+    <div className="flex flex-col justify-center items-center h-screen w-full bg-[#FFFDF5] text-black p-2 select-none font-sans overflow-hidden"
          style={{ backgroundImage: 'radial-gradient(#000 1px, transparent 1px)', backgroundSize: '24px 24px' }}>
+      <HowToPlayDialog open={showHowToPlay} onClose={() => setShowHowToPlay(false)} />
       
       <div className="w-full max-w-sm flex flex-col justify-between rounded-none border-4 border-black bg-white p-4 shadow-[8px_8px_0px_0px_#000]">
         
         <div className="text-center mb-3">
-          <h1 className="text-3xl font-black tracking-tighter uppercase text-black bg-[#FFD93D] px-3 py-1 border-4 border-black shadow-[4px_4px_0px_0px_#000] inline-block rotate-[1deg]">
-            ShadowChess
-          </h1>
+          <div className="flex items-center justify-center gap-2">
+            <h1 className="text-3xl font-black tracking-tighter uppercase text-black bg-[#FFD93D] px-3 py-1 border-4 border-black shadow-[4px_4px_0px_0px_#000] inline-block rotate-[1deg]">
+              ShadowChess
+            </h1>
+            <button
+              type="button"
+              aria-label="How to play"
+              onClick={() => setShowHowToPlay(true)}
+              className="w-8 h-8 border-4 border-black rounded-none bg-white text-black font-black text-sm leading-none shadow-[3px_3px_0px_0px_#000] active:translate-x-[3px] active:translate-y-[3px] active:shadow-none"
+            >
+              ?
+            </button>
+          </div>
         </div>
 
         <div className="relative w-full aspect-square rounded-none overflow-hidden border-4 border-black mb-4 shadow-[4px_4px_0px_0px_#000]">

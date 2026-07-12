@@ -14,7 +14,7 @@ type FenEntry = {
 const loadFenList = async (): Promise<FenEntry[]> => {
 //   const raw = await readFile(fenPath, 'utf8');
 //   const data = JSON.parse(raw);
-const games = JSON.parse(await redis.get('shadowchess_anand_games') ?? '[]');
+const games = JSON.parse(await redis.get('shadowchess_games') ?? '[]');
 
   return (games as any[])
     .map((entry) => {
