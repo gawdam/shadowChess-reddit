@@ -66,11 +66,15 @@ export const createGameData = async (seed: string): Promise<GameData> => {
 
   const index = hashSeedToIndex(seed, fenList.length);
   const chosen = fenList[index];
+  const createdAt = Date.now();
+  const closesAt = createdAt + 24 * 60 * 60 * 1000;
 
   return {
     fen: chosen!.fen,
     turn: parseFEN(chosen!.fen),
     meta: chosen!.meta,
     seed,
+    createdAt,
+    closesAt,
   };
 };

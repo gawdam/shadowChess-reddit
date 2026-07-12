@@ -7,24 +7,19 @@ import type { MatchRecord, MoveInput, StoredMove } from '../shared/api';
 
 type PieceColor = 'w' | 'b';
 type PieceKind = 'pawn' | 'knight' | 'bishop' | 'rook' | 'queen' | 'king';
+type ThemeMode = 'light' | 'dark';
 
 type ReplayMove = {
   move: MoveInput;
   color: PieceColor;
 };
 
-type ReplayCaptureInfo = {
-  piece: string;
-  value: number;
-  by: PieceColor;
-};
-
 type ReplayPosition = {
   board: (string | null)[];
   moves: Array<StoredMove & { color: PieceColor }>;
   score: number;
-  captureByWhite: ReplayCaptureInfo | null;
-  captureByBlack: ReplayCaptureInfo | null;
+  capturesByWhite: string[];
+  capturesByBlack: string[];
 };
 
 type ParsedReplayMove = {
@@ -42,6 +37,141 @@ type AppliedReplayMove = {
 type ReplayMoveFailure = {
   reason: 'captured piece moved' | 'illegal move';
 };
+
+type PromotionChoice = 'knight' | 'bishop' | 'rook' | 'queen';
+
+type PendingPromotion = {
+  from: number;
+  to: number;
+  color: PieceColor;
+  movingPiece: string;
+  capturedPiece: string | null;
+};
+
+const allPieceAssets = [
+  'white_pawn',
+  'white_knight',
+  'white_bishop',
+  'white_rook',
+  'white_queen',
+  'white_king',
+  'black_pawn',
+  'black_knight',
+  'black_bishop',
+  'black_rook',
+  'black_queen',
+  'black_king',
+];
+
+const usePieceAssetsReady = () => {
+  const [ready, setReady] = useState(false);
+
+  React.useEffect(() => {
+    let cancelled = false;
+    let remaining = allPieceAssets.length;
+
+    const finish = () => {
+      if (!cancelled) {
+        setReady(true);
+      }
+    };
+
+    if (remaining === 0) {
+      finish();
+      return;
+    }
+
+    const onAssetSettled = () => {
+      remaining -= 1;
+      if (remaining === 0) {
+        window.requestAnimationFrame(() => finish());
+      }
+    };
+
+    allPieceAssets.forEach((piece) => {
+      const img = new Image();
+      img.onload = onAssetSettled;
+      img.onerror = onAssetSettled;
+      img.src = `/pieces/${piece}.png`;
+      if (img.complete) {
+        onAssetSettled();
+      }
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  return ready;
+};
+
+const LoadingSpinner = ({ size = 44, accent = '#81b64c' }: { size?: number; accent?: string }) => (
+  <div
+    style={{
+      width: size,
+      height: size,
+      borderRadius: '50%',
+      border: `${Math.max(3, Math.floor(size / 10))}px solid rgba(255,255,255,0.16)`,
+      borderTopColor: accent,
+      animation: 'asyncchess-spin 0.9s linear infinite',
+      boxSizing: 'border-box',
+    }}
+  />
+);
+
+const LoadingPanel = ({
+  title,
+  detail,
+  overlay,
+}: {
+  title: string;
+  detail: string;
+  overlay?: boolean;
+}) => (
+  <div
+    style={{
+      position: overlay ? 'absolute' : 'fixed',
+      inset: 0,
+      zIndex: overlay ? 6 : 10001,
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      background: overlay ? 'rgba(17, 17, 17, 0.58)' : 'rgba(15, 15, 15, 0.78)',
+      backdropFilter: 'blur(6px)',
+      padding: '20px',
+    }}
+  >
+    <div
+      style={{
+        minWidth: 'min(320px, 92vw)',
+        maxWidth: '420px',
+        borderRadius: '14px',
+        border: '1px solid rgba(129, 182, 76, 0.32)',
+        background: 'rgba(28, 27, 24, 0.96)',
+        padding: '24px',
+        textAlign: 'center',
+        color: '#f5f1e8',
+        boxShadow: '0 18px 48px rgba(0,0,0,0.38)',
+      }}
+    >
+      <div style={{ display: 'flex', justifyContent: 'center', marginBottom: '16px' }}>
+        <LoadingSpinner />
+      </div>
+      <div style={{ fontSize: '18px', fontWeight: 800, marginBottom: '8px' }}>{title}</div>
+      <div style={{ fontSize: '13px', lineHeight: 1.5, color: 'rgba(245,241,232,0.74)' }}>{detail}</div>
+    </div>
+  </div>
+);
+
+const promotionLetterMap: Record<PromotionChoice, 'N' | 'B' | 'R' | 'Q'> = {
+  knight: 'N',
+  bishop: 'B',
+  rook: 'R',
+  queen: 'Q',
+};
+
+const promotionOptions: PromotionChoice[] = ['queen', 'rook', 'bishop', 'knight'];
 
 
 const Chessboard = () => {
@@ -112,40 +242,30 @@ const Chessboard = () => {
     const [dragging, setDragging] = useState<number | null>(null);
     const [ghost, setGhost] = useState<{ piece: string; x: number; y: number; scale?: number } | null>(null);
     const [targetIndex, setTargetIndex] = useState<number | null>(null);
-    const [capturedByWhite, setCapturedByWhite] = useState<string[]>([]);
-    const [capturedByBlack, setCapturedByBlack] = useState<string[]>([]);
     const [moves, setMoves] = useState<Array<StoredMove & { color: PieceColor }>>([]);
+    const [pendingPromotion, setPendingPromotion] = useState<PendingPromotion | null>(null);
     // Pop-up Modal visibility state
     const [showModal, setShowModal] = useState<boolean>(false);
 
     // Post-Game Replay Engine States
     const [activeReplay, setActiveReplay] = useState<MatchRecord | null>(null);
+    const [simulationTab, setSimulationTab] = useState<'score' | 'best' | 'worst'>('score');
 
     const [replayPositions, setReplayPositions] = useState<ReplayPosition[]>([]);
     const [currentPly, setCurrentPly] = useState<number>(-1); // -1 means initial puzzle state
     const [liveReplayScore, setLiveReplayScore] = useState<number>(0);
+    const [themeMode, setThemeMode] = useState<ThemeMode>(() => {
+      if (typeof window === 'undefined') return 'dark';
+      const isDarkMode = window.matchMedia('(prefers-color-scheme: dark)').matches;
+      return isDarkMode ? 'dark' : 'light';
+    });
     
-    const handleOnClick = async () => {
-    const moveRecords = moves.map(({ notation, pieceFrom, pieceTo }) => ({ notation, pieceFrom, pieceTo }));
-    
-    if (moveRecords.length !== 5) {
-      alert(`Please finish your moves first (${moveRecords.length}/5)`);
-      return;
-    }
-
-    const success = await submitMoves(moveRecords);
-    if (success) {
-      // Clear interactive UI gameplay tracking states
-      setSelected(null);
-      setLegalMoves([]);
-      setMoves([]);
-      setCapturedByWhite([]);
-      setCapturedByBlack([]);
-      
-      // Trigger the success scoreboard pop-up
-      setShowModal(true);
-      }
-    };
+    const buildMoveRecords = () => moves.map(({ notation, pieceFrom, pieceTo, promotion }) => ({
+      notation,
+      pieceFrom,
+      pieceTo,
+      ...(promotion ? { promotion } : {}),
+    }));
 
     const pieceValues: Record<PieceKind, number> = { pawn: 1, knight: 3, bishop: 3, rook: 5, queen: 9, king: 15 };
     const promotionValues: Partial<Record<PieceKind, number>> = { knight: 3, bishop: 3, rook: 5, queen: 9 };
@@ -448,13 +568,13 @@ const Chessboard = () => {
         board: replayBoard,
         moves: [],
         score: 0,
-        captureByWhite: null,
-        captureByBlack: null,
+        capturesByWhite: [],
+        capturesByBlack: [],
       }];
       let runningWhiteAdvantage = 0;
       const appliedMoves: Array<StoredMove & { color: PieceColor }> = [];
-      let captureByWhite: ReplayCaptureInfo | null = null;
-      let captureByBlack: ReplayCaptureInfo | null = null;
+      const capturesByWhite: string[] = [];
+      const capturesByBlack: string[] = [];
 
       for (const replayMove of timeline) {
         const appliedMove = applyReplayMove(replayBoard, replayMove.color, replayMove.move, true); // Enable variant rules for self-capture
@@ -476,8 +596,8 @@ const Chessboard = () => {
             board: replayBoard,
             moves: [...appliedMoves],
             score: userData.userSide === 'white' ? runningWhiteAdvantage : -runningWhiteAdvantage,
-            captureByWhite,
-            captureByBlack,
+            capturesByWhite: [...capturesByWhite],
+            capturesByBlack: [...capturesByBlack],
           });
           break;
         }
@@ -487,15 +607,10 @@ const Chessboard = () => {
         appliedMoves.push({ ...appliedMove.move, color: replayMove.color });
         const capturedValue = getCapturedPieceValue(appliedMove.captured);
         if (appliedMove.captured && capturedValue > 0) {
-          const captureInfo: ReplayCaptureInfo = {
-            piece: appliedMove.captured,
-            value: capturedValue,
-            by: replayMove.color,
-          };
           if (replayMove.color === 'w') {
-            captureByWhite = captureInfo;
+            capturesByWhite.push(appliedMove.captured);
           } else {
-            captureByBlack = captureInfo;
+            capturesByBlack.push(appliedMove.captured);
           }
         }
 
@@ -503,8 +618,8 @@ const Chessboard = () => {
           board: replayBoard,
           moves: [...appliedMoves],
           score: userData.userSide === 'white' ? runningWhiteAdvantage : -runningWhiteAdvantage,
-          captureByWhite,
-          captureByBlack,
+          capturesByWhite: [...capturesByWhite],
+          capturesByBlack: [...capturesByBlack],
         });
       }
 
@@ -548,38 +663,57 @@ const Chessboard = () => {
     const moveAudioRef = useRef<HTMLAudioElement>(new Audio('/sounds/move-self.mp3'));
     const captureAudioRef = useRef<HTMLAudioElement>(new Audio('/sounds/capture.mp3'));
 
-    
-    const handleMove = (from: number, to: number) => {
+    const files = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'] as const;
+    const ranks = ['8', '7', '6', '5', '4', '3', '2', '1'] as const;
+
+    const formatMoveNotation = (piece: string, to: number, promotion?: PromotionChoice) => {
+      const kind = piece.split('_')[1];
+      const toSquare = (files[to % 8] ?? '') + (ranks[Math.floor(to / 8)] ?? '');
+      const baseNotation = (kind === 'pawn' ? '' : kind === 'knight' ? 'N' : kind?.[0]?.toUpperCase() ?? '') + toSquare;
+      return promotion ? `${baseNotation}=${promotionLetterMap[promotion]}` : baseNotation;
+    };
+
+    const isPromotionMove = (piece: string, to: number) => {
+      const kind = piece.split('_')[1];
+      if (kind !== 'pawn') return false;
+
+      const targetRow = Math.floor(to / 8);
+      return piece.startsWith('white_') ? targetRow === 0 : targetRow === 7;
+    };
+
+    const commitMove = (from: number, to: number, promotion?: PromotionChoice) => {
       if (from === to) return;
-      const piece = board[from];
+      const pendingMove = pendingPromotion && pendingPromotion.from === from && pendingPromotion.to === to
+        ? pendingPromotion
+        : null;
+      const piece = pendingMove?.movingPiece ?? board[from];
       if (!piece) return;
       // clear ghost immediately to avoid visual overlap during move
       setGhost(null);
       setTargetIndex(null);
       setDragging(null);
       const newBoard = board.slice();
-      const destPiece = newBoard[to];
-      newBoard[to] = piece;
-      newBoard[from] = null;
+      const destPiece = pendingMove?.capturedPiece ?? newBoard[to];
+      const pieceColor = piece.startsWith('white_') ? 'w' : 'b';
+      const promotedPiece = promotion ? `${piece.startsWith('white_') ? 'white' : 'black'}_${promotion}` : piece;
+      newBoard[to] = promotedPiece;
+      if (!pendingMove) {
+        newBoard[from] = null;
+      }
       setBoard(newBoard);
       setSelected(null);
+      setPendingPromotion(null);
 
-      // Record move ledger entry
-      const kind = piece.split('_')[1];
-      const pieceColor = piece.startsWith('white_') ? 'w' : 'b';
-      const files = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'];
-      const ranks = ['8', '7', '6', '5', '4', '3', '2', '1'];
-      const toSquare = files![to % 8]! + ranks[Math.floor(to / 8)];
-      const moveNotation = (kind === 'pawn' ? '' : kind === 'knight' ? 'N' : kind![0]!.toUpperCase()) + toSquare;
-      setMoves((prev) => [...prev, { notation: moveNotation, color: pieceColor, pieceFrom: from, pieceTo: to }]);
+      setMoves((prev) => [...prev, {
+        notation: formatMoveNotation(piece, to, promotion),
+        color: pieceColor,
+        pieceFrom: from,
+        pieceTo: to,
+        ...(promotion ? { promotion } : {}),
+      }]);
 
       try {
         if (destPiece) {
-          if (piece.startsWith('white_')) {
-            setCapturedByWhite((prev) => [...prev, destPiece]);
-          } else {
-            setCapturedByBlack((prev) => [...prev, destPiece]);
-          }
           captureAudioRef.current.currentTime = 0;
           void captureAudioRef.current.play();
         } else {
@@ -589,6 +723,35 @@ const Chessboard = () => {
       } catch (e) {
         // ignore playback errors
       }
+    };
+
+    const requestMove = (from: number, to: number) => {
+      if (from === to) return;
+      if (userData.hasSubmitted || submitting || refreshing || showModal || moves.length >= 5) return;
+      const piece = board[from];
+      if (!piece) return;
+
+      if (isPromotionMove(piece, to)) {
+        setGhost(null);
+        setTargetIndex(null);
+        setDragging(null);
+        const newBoard = board.slice();
+        const capturedPiece = newBoard[to] ?? null;
+        newBoard[to] = piece;
+        newBoard[from] = null;
+        setBoard(newBoard);
+        setSelected(null);
+        setPendingPromotion({
+          from,
+          to,
+          color: piece.startsWith('white_') ? 'w' : 'b',
+          movingPiece: piece,
+          capturedPiece,
+        });
+        return;
+      }
+
+      commitMove(from, to);
     };
 
     // Piece movement rules, without check/checkmate validation.
@@ -710,13 +873,13 @@ const Chessboard = () => {
       result?: string;
       turn?: string;
     } | null>({ turn: 'w' });
+  const whitePlayerName = gameMeta?.white?.split(',')[0] ?? 'White';
+  const blackPlayerName = gameMeta?.black?.split(',')[0] ?? 'Black';
 
-
-    const gameTitle = `${gameMeta?.white?.split(',')[0] ?? 'White'} vs ${gameMeta?.black?.split(',')[0] ?? 'Black'}`;
-    const gameSubtitle = gameMeta?.event || (gameMeta?.year ? `${gameMeta.year} Chess championship` : 'Chess championship');
-    const titleText = `${gameTitle}`;
-
-    const { gameData, userData, submitMoves, submitting, selectSide, playerCounts } = useCounter();
+    const { gameData, userData, loading, submitMoves, submitting, selectSide, selectingSide, refreshing, playerCounts, simulationStats } = useCounter();
+    const whiteStats = simulationStats.white;
+    const blackStats = simulationStats.black;
+    const pieceAssetsReady = usePieceAssetsReady();
     const boardStyle: React.CSSProperties = {
       border: '4px solid rgba(255,255,255,0.08)',
       boxShadow: '0 0 40px rgba(0,0,0,0.45)',
@@ -739,8 +902,7 @@ const Chessboard = () => {
       setDragging(null);
       setGhost(null);
       setTargetIndex(null);
-      setCapturedByWhite([]);
-      setCapturedByBlack([]);
+      setPendingPromotion(null);
       setMoves([]);
       setGameMeta({ ...gameData.meta, turn: gameData.turn });
     }, [gameData]);
@@ -749,6 +911,8 @@ const Chessboard = () => {
       if (!gameData || !userData.hasSubmitted || activeReplay) return;
       const defaultReplay = userData.bestMatch ?? userData.worstMatch;
       if (!defaultReplay) return;
+
+      setSimulationTab('score');
 
       const replayTimer = window.setTimeout(() => loadReplayGame(defaultReplay), 0);
       return () => window.clearTimeout(replayTimer);
@@ -786,7 +950,7 @@ const Chessboard = () => {
       }
       // only allow move if legal
       if (legalMoves.includes(idx) && selected !== null) {
-        handleMove(selected, idx);
+        requestMove(selected, idx);
         setLegalMoves([]);
         return;
       }
@@ -889,7 +1053,7 @@ const Chessboard = () => {
                 setSelected(null);
                 setLegalMoves([]);
               } else if (legalMoves.includes(toIdx) && selected !== null) {
-                handleMove(selected, toIdx);
+                requestMove(selected, toIdx);
                 setLegalMoves([]);
               } else if (board[toIdx]) {
                 // select other piece of same color
@@ -919,7 +1083,7 @@ const Chessboard = () => {
         const piece = board[from];
         if (isPieceMovable(piece)) {
           const legal = getLegalMoves(board, from);
-          if (legal.includes(to)) handleMove(from, to);
+          if (legal.includes(to)) requestMove(from, to);
         }
       }
       touchFromRef.current = null;
@@ -959,7 +1123,7 @@ const Chessboard = () => {
         const piece = board[from];
         if (!isPieceMovable(piece)) return;
         const legal = getLegalMoves(board, from);
-        if (legal.includes(to)) handleMove(from, to);
+        if (legal.includes(to)) requestMove(from, to);
       }
       setDragging(null);
       setGhost(null);
@@ -1002,7 +1166,7 @@ const Chessboard = () => {
         const to = squareEl ? Number(squareEl.dataset.index) : null;
         if (!Number.isNaN(fromIndex) && to !== null && !Number.isNaN(to)) {
           const legal = getLegalMoves(board, fromIndex);
-          if (legal.includes(to)) handleMove(fromIndex, to);
+          if (legal.includes(to)) requestMove(fromIndex, to);
         }
         fromIndex = null;
         setDragging(null);
@@ -1053,87 +1217,287 @@ const Chessboard = () => {
     const opponentColor: PieceColor = userColor === 'w' ? 'b' : 'w';
     const displayedUserScore = isReplayMode ? liveReplayScore : userData.score;
     const displayedOpponentScore = isReplayMode ? -liveReplayScore : null;
+    const isScoreOnlyTab = isReplayMode && simulationTab === 'score';
+    const currentReplayMove = isReplayMode && currentPly >= 0
+      ? currentReplayPosition?.moves[currentReplayPosition.moves.length - 1] ?? null
+      : null;
+    const replayHighlightFrom = currentReplayMove && currentReplayMove.pieceFrom >= 0
+      ? currentReplayMove.pieceFrom
+      : null;
+    const replayHighlightTo = currentReplayMove && currentReplayMove.pieceTo >= 0
+      ? currentReplayMove.pieceTo
+      : null;
+    const [viewportWidth, setViewportWidth] = useState<number>(() =>
+      typeof window === 'undefined' ? 1024 : window.innerWidth
+    );
+    const isDesktopLayout = viewportWidth >= 1100;
+    const isDesktopPopupLayout = isDesktopLayout && viewportWidth < 1450;
+    const desktopBoardWidth = isReplayMode
+      ? (isDesktopPopupLayout ? 500 : 620)
+      : 620;
+    const isGameClosed = Boolean(gameData?.closesAt && Date.now() >= gameData.closesAt);
+    const theme = themeMode === 'dark'
+      ? {
+          appBg: '#F6F1E6',
+          panelBg: '#FFFFFF',
+          cardBg: '#FFFFFF',
+          textPrimary: '#0E0E0E',
+          textSecondary: '#121212',
+          textMuted: '#3B3B3B',
+          borderSoft: '#000000',
+          boardDark: '#B07C49',
+          boardLight: '#FFF7DC',
+          overlay: 'rgba(15,15,15,0.72)',
+        }
+      : {
+          appBg: '#FFFDF5',
+          panelBg: '#FFFFFF',
+          cardBg: '#FFFFFF',
+          textPrimary: '#0E0E0E',
+          textSecondary: '#121212',
+          textMuted: '#3B3B3B',
+          borderSoft: '#000000',
+          boardDark: '#B07C49',
+          boardLight: '#FFF7DC',
+          overlay: 'rgba(18,16,13,0.6)',
+        };
+
+    React.useEffect(() => {
+      const onResize = () => setViewportWidth(window.innerWidth);
+      window.addEventListener('resize', onResize);
+      return () => window.removeEventListener('resize', onResize);
+    }, []);
+
+    React.useEffect(() => {
+      const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
+      const syncThemeWithPreference = (event?: MediaQueryListEvent) => {
+        const prefersDark = event ? event.matches : mediaQuery.matches;
+        setThemeMode(prefersDark ? 'dark' : 'light');
+      };
+
+      syncThemeWithPreference();
+      mediaQuery.addEventListener('change', syncThemeWithPreference);
+      return () => mediaQuery.removeEventListener('change', syncThemeWithPreference);
+    }, []);
+
+    React.useEffect(() => {
+      document.body.style.backgroundColor = theme.appBg;
+      document.body.style.color = theme.textSecondary;
+    }, [theme.appBg, theme.textSecondary]);
+
+    React.useEffect(() => {
+      if (showModal && !submitting && !refreshing && userData.hasSubmitted) {
+        setShowModal(false);
+      }
+    }, [showModal, submitting, refreshing, userData.hasSubmitted]);
+
+    const autoSubmitTriggeredRef = useRef(false);
+
+    React.useEffect(() => {
+      if (userData.hasSubmitted) {
+        autoSubmitTriggeredRef.current = true;
+        return;
+      }
+
+      if (moves.length < 5) {
+        autoSubmitTriggeredRef.current = false;
+        return;
+      }
+
+      if (autoSubmitTriggeredRef.current || submitting || refreshing || showModal || pendingPromotion) {
+        return;
+      }
+
+      autoSubmitTriggeredRef.current = true;
+
+      const submit = async () => {
+        setShowModal(true);
+        const success = await submitMoves(buildMoveRecords());
+        if (success) {
+          setSelected(null);
+          setLegalMoves([]);
+        } else {
+          setShowModal(false);
+          autoSubmitTriggeredRef.current = false;
+        }
+      };
+
+      void submit();
+    }, [moves, userData.hasSubmitted, submitting, refreshing, showModal, pendingPromotion, submitMoves]);
+
+    const showInitialLoader = loading && !userData.userSide;
+    const showBoardLoadingOverlay = Boolean(userData.userSide) && (selectingSide || loading || !pieceAssetsReady);
+    const showScoreboardLoader = showModal || submitting || refreshing;
 
     const getReplayCaptureForSide = (side: PieceColor) => {
-      if (!currentReplayPosition) return null;
-      return side === 'w' ? currentReplayPosition.captureByWhite : currentReplayPosition.captureByBlack;
+      if (!currentReplayPosition) return [];
+      return side === 'w' ? currentReplayPosition.capturesByWhite : currentReplayPosition.capturesByBlack;
     };
 
     const renderReplayCaptureBadge = (side: PieceColor) => {
       if (!isReplayMode) return null;
-      const capture = getReplayCaptureForSide(side);
-      if (!capture) return null;
+      const captures = getReplayCaptureForSide(side);
+      if (captures.length === 0) return null;
 
       return (
-        <span
+        <div
           style={{
             display: 'inline-flex',
             alignItems: 'center',
             gap: '4px',
             marginLeft: '8px',
-            background: 'rgba(255,255,255,0.08)',
-            border: '1px solid rgba(255,255,255,0.15)',
+            background: themeMode === 'dark' ? 'rgba(255,255,255,0.08)' : 'rgba(31,29,25,0.08)',
+            border: `1px solid ${theme.borderSoft}`,
             borderRadius: '999px',
-            padding: '2px 8px',
+            padding: '2px 6px',
             fontSize: '11px',
             fontWeight: 700,
-            color: '#81b64c',
+            color: theme.textPrimary,
           }}
         >
-          <img
-            src={`/pieces/${capture.piece}.png`}
-            alt={capture.piece}
-            style={{ width: 14, height: 14 }}
-          />
-          <span>+{capture.value}</span>
-        </span>
+          {captures.map((piece, index) => (
+            <img
+              key={`${side}-cap-${index}-${piece}`}
+              src={`/pieces/${piece}.png`}
+              alt={piece}
+              style={{ width: 13, height: 13 }}
+            />
+          ))}
+        </div>
       );
     };
     const showOpponentPlaceholder =
       (gameMeta?.turn === 'b' && userData.userSide === 'white') ||
       (gameMeta?.turn === 'w' && userData.userSide === 'black');
+    if (showInitialLoader) {
+    return (
+      <LoadingPanel
+        title="Loading match"
+        detail="Preparing the daily position and player state before side selection opens."
+      />
+    );
+  }
+    if (isGameClosed && !userData.hasSubmitted) {
+    return (
+      <div style={{
+        display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+        minHeight: '100vh', background: theme.appBg, color: theme.textSecondary, fontFamily: 'sans-serif', padding: 20
+      }}>
+        <div style={{
+          background: theme.panelBg,
+          padding: '28px',
+          borderRadius: '18px',
+          boxShadow: '0 18px 40px rgba(0,0,0,0.18)',
+          maxWidth: '460px',
+          width: '100%',
+          textAlign: 'center',
+          border: `1px solid ${theme.borderSoft}`,
+        }}>
+          <h2 style={{ margin: '0 0 10px 0', color: theme.textPrimary, fontSize: '28px', fontWeight: 800 }}>Game Closed</h2>
+          <p style={{ margin: 0, color: theme.textMuted, fontSize: '14px', lineHeight: 1.5 }}>
+            This puzzle was active for 24 hours and can no longer be played.
+          </p>
+        </div>
+      </div>
+    );
+  }
     if (!userData.userSide) {
     return (
       <div style={{
         display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
-        minHeight: '100vh', background: '#f4efe4', fontFamily: 'sans-serif', padding: 20
+        minHeight: '100vh', background: theme.appBg, color: theme.textSecondary, fontFamily: 'sans-serif', padding: 20
       }}>
         <div style={{
-          background: '#fff', padding: '32px', borderRadius: '12px', boxShadow: '0 8px 24px rgba(0,0,0,0.1)',
-          maxWidth: '440px', width: '100%', textAlign: 'center'
+          background: theme.panelBg,
+          padding: '20px',
+          borderRadius: '0px',
+          boxShadow: '8px 8px 0 0 #000',
+          maxWidth: '700px',
+          width: '100%',
+          textAlign: 'center',
+          border: `4px solid ${theme.borderSoft}`,
         }}>
-          <h2 style={{ margin: '0 0 8px 0', color: '#262421' }}>Choose Your Side</h2>
-          <p style={{ color: '#706e6b', fontSize: '14px', marginBottom: '24px' }}>Join a faction to play your moves!</p>
+          <h2 style={{ margin: '0 0 18px 0', color: theme.textPrimary, fontSize: '28px', fontWeight: 800 }}>Choose Your Side</h2>
           
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: '16px' }}>
             <button 
               onClick={() => { selectSide('white');}}
               style={{
-                display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-                padding: '16px', background: '#ffffff', border: '2px solid #e1e1e1', borderRadius: '8px',
-                cursor: 'pointer', fontSize: '16px', fontWeight: 600, color: '#262421'
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                gap: '12px',
+                padding: '22px 16px',
+                background: themeMode === 'dark' ? '#f6f0e4' : '#fffdf7',
+                border: '2px solid rgba(177, 159, 124, 0.38)',
+                borderRadius: '16px',
+                cursor: 'pointer',
+                fontSize: '16px',
+                fontWeight: 700,
+                color: '#262421',
+                boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.75), 0 10px 22px rgba(0,0,0,0.08)',
               }}
             >
-              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                <div style={badgeStyle('#ffffff')} />
-                <span>White ({gameMeta?.white})</span>
+              <div style={{
+                width: '100%',
+                borderRadius: '12px',
+                background: 'rgba(183, 198, 156, 0.55)',
+                padding: '18px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+              }}>
+                <img
+                  src="/pieces/white_king.png"
+                  alt="White king"
+                  style={{ width: '72px', height: '72px', objectFit: 'contain' }}
+                />
               </div>
-              <span style={{ fontSize: '13px', color: '#706e6b' }}>{playerCounts?.white || 0} Players</span>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', alignItems: 'center' }}>
+                <span style={{ fontSize: '12px', letterSpacing: '0.16em', textTransform: 'uppercase', color: '#706e6b' }}>White</span>
+                <span style={{ fontSize: '24px', fontWeight: 800 }}>{whitePlayerName}</span>
+                <span style={{ fontSize: '13px', color: '#706e6b' }}>{playerCounts?.white || 0} Players</span>
+              </div>
             </button>
 
             <button 
               onClick={() => {selectSide('black');}}
               style={{
-                display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-                padding: '16px', background: '#262421', border: '2px solid #262421', borderRadius: '8px',
-                cursor: 'pointer', fontSize: '16px', fontWeight: 600, color: '#ffffff'
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                gap: '12px',
+                padding: '22px 16px',
+                background: '#1f1d1a',
+                border: '2px solid rgba(129, 182, 76, 0.28)',
+                borderRadius: '16px',
+                cursor: 'pointer',
+                fontSize: '16px',
+                fontWeight: 700,
+                color: '#ffffff',
+                boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.08), 0 10px 22px rgba(0,0,0,0.2)',
               }}
             >
-              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                <div style={badgeStyle('#000000')} />
-                <span>Black ({gameMeta?.black})</span>
+              <div style={{
+                width: '100%',
+                borderRadius: '12px',
+                background: 'rgba(71, 100, 44, 0.73)',
+                padding: '18px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+              }}>
+                <img
+                  src="/pieces/black_king.png"
+                  alt="Black king"
+                  style={{ width: '72px', height: '72px', objectFit: 'contain' }}
+                />
               </div>
-              <span style={{ fontSize: '13px', color: '#bababa' }}>{playerCounts?.black || 0} Players</span>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', alignItems: 'center' }}>
+                <span style={{ fontSize: '12px', letterSpacing: '0.16em', textTransform: 'uppercase', color: '#bababa' }}>Black</span>
+                <span style={{ fontSize: '24px', fontWeight: 800 }}>{blackPlayerName}</span>
+                <span style={{ fontSize: '13px', color: '#bababa' }}>{playerCounts?.black || 0} Players</span>
+              </div>
             </button>
           </div>
         </div>
@@ -1146,15 +1510,17 @@ return (
     style={{
       ...appStyle,
       fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif',
-      backgroundColor: '#161512', // Set dark application background
-      color: '#bababa', // Adjusted general text color to light gray
-      padding: '16px',
-      maxWidth: '1000px',
+      backgroundColor: theme.appBg,
+      backgroundImage: 'radial-gradient(#000 1px, transparent 1px)',
+      backgroundSize: '24px 24px',
+      color: theme.textSecondary,
+      padding: isReplayMode && isDesktopLayout ? '8px 12px' : '16px',
+      maxWidth: isReplayMode && isDesktopLayout ? 'min(1500px, 96vw)' : (isReplayMode ? '1080px' : '1000px'),
       margin: '0 auto',
       display: 'flex',
       flexDirection: 'column',
       alignItems: 'center',
-      gap: '16px',
+      gap: isReplayMode ? '8px' : '16px',
       boxSizing: 'border-box',
       width: '100%',
     }}
@@ -1164,64 +1530,209 @@ return (
     onTouchEnd={onTouchEnd}
   >
     {/* ================= SUCCESS SCORE POP-UP OVERLAY ================= */}
-    {showModal && (
-      <div style={{
-        position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
-        backgroundColor: 'rgba(0,0,0,0.85)', display: 'flex',
-        alignItems: 'center', justifyContent: 'center', zIndex: 10000, padding: '20px'
-      }}>
-        <div style={{
-          backgroundColor: '#211f1c', border: '1px solid #81b64c',
-          borderRadius: '8px', padding: '32px', maxWidth: '400px', width: '100%', textAlign: 'center'
-        }}>
-          <h2 style={{ color: '#81b64c', margin: '0 0 12px 0' }}>Turn Complete, {userData.username}!</h2>
-          <p style={{ color: '#bababa' }}>Your aggregate matrix score against all active opponents has been saved.</p>
-          <h1 style={{ fontSize: '48px', color: '#fff', margin: '16px 0' }}>{userData.score} pts</h1>
-          <button 
-            onClick={() => {
-              setShowModal(false);
-              loadReplayGame(userData.bestMatch ?? userData.worstMatch);
-            }}
-            style={{
-              background: '#81b64c', color: '#fff', border: 'none', padding: '12px 24px',
-              borderRadius: '4px', fontWeight: 700, cursor: 'pointer', width: '100%'
-            }}
-          >
-            Continue to Dashboard
-          </button>
+    {showScoreboardLoader && (
+      <LoadingPanel
+        title="Generating scoreboard"
+        detail="Your moves were saved. Refreshing match results and simulation totals before the dashboard opens."
+      />
+    )}
+
+    {pendingPromotion && (
+      <div
+        style={{
+          position: 'fixed',
+          inset: 0,
+          zIndex: 10002,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          background: 'rgba(15, 15, 15, 0.52)',
+          backdropFilter: 'blur(4px)',
+          padding: '20px',
+        }}
+      >
+        <div
+          style={{
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '14px',
+            padding: '18px',
+            borderRadius: '16px',
+            background: 'rgba(24, 23, 20, 0.98)',
+            border: '1px solid rgba(129, 182, 76, 0.35)',
+            boxShadow: '0 14px 32px rgba(0,0,0,0.45)',
+            minWidth: 'min(320px, 92vw)',
+          }}
+        >
+          <div style={{ textAlign: 'center', color: '#f5f1e8', fontSize: '18px', fontWeight: 800 }}>
+            Choose promotion
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '8px' }}>
+            {promotionOptions.map((option) => {
+              const piecePrefix = pendingPromotion.color === 'w' ? 'white' : 'black';
+              return (
+                <button
+                  key={option}
+                  type="button"
+                  onClick={() => commitMove(pendingPromotion.from, pendingPromotion.to, option)}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    width: '60px',
+                    height: '60px',
+                    borderRadius: '12px',
+                    border: '1px solid rgba(255,255,255,0.12)',
+                    background: 'rgba(255,255,255,0.06)',
+                    cursor: 'pointer',
+                    padding: 0,
+                    margin: '0 auto',
+                  }}
+                >
+                  <img
+                    src={`/pieces/${piecePrefix}_${option}.png`}
+                    alt={option}
+                    style={{ width: '42px', height: '42px', objectFit: 'contain' }}
+                  />
+                </button>
+              );
+            })}
+          </div>
         </div>
       </div>
     )}
 
-    {/* ================= HEADER SECTION (STAYS ON TOP) ================= */}
-    <div style={{ textAlign: 'center', width: '100%', marginBottom: '4px' }}>
-      <h1 style={{ fontSize: 'min(6vw, 28px)', fontWeight: 800, letterSpacing: '-0.025em', color: '#fff', margin: '0 0 4px 0' }}>
-        {titleText}
-      </h1>
-      <p style={{ fontSize: 'min(3.5vw, 14px)', color: '#989795', fontWeight: 500, margin: '0 0 12px 0' }}>
-        {gameSubtitle} — <span style={{ color: '#81b64c', fontWeight: 700 }}>{gameMeta?.turn === 'b' ? "Black goes first" : "White goes first"}</span>
-      </p>
-    </div>
+    {isReplayMode && (
+      <div style={{
+        width: '100%',
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '10px',
+      }}>
+        <div style={{ textAlign: 'center' }}>
+          <h1 style={{
+            margin: 0,
+            display: 'inline-block',
+            background: '#FFD93D',
+            border: '4px solid #000',
+            boxShadow: '4px 4px 0 0 #000',
+            padding: '6px 16px',
+            fontSize: '34px',
+            fontWeight: 900,
+            lineHeight: 1,
+            textTransform: 'uppercase',
+            letterSpacing: '-0.04em',
+            transform: 'rotate(-0.6deg)',
+            color: '#000',
+          }}>
+            ShadowChess
+          </h1>
+        </div>
+        <div style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(3, 1fr)',
+          gap: '6px',
+        }}>
+        <button
+          type="button"
+          onClick={() => {
+            setSimulationTab('score');
+          }}
+          onTouchEnd={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            setSimulationTab('score');
+          }}
+          style={{
+            border: '3px solid #000',
+            background: simulationTab === 'score' ? '#FFD93D' : '#FFFFFF',
+            color: '#000',
+            borderRadius: '0px',
+            padding: '8px 8px',
+            fontSize: '12px',
+            fontWeight: 800,
+            cursor: 'pointer',
+            boxShadow: simulationTab === 'score' ? '3px 3px 0 0 #000' : 'none',
+          }}
+        >
+          Score
+        </button>
+        <button
+          type="button"
+          onClick={() => {
+            setSimulationTab('best');
+            if (userData.bestMatch) loadReplayGame(userData.bestMatch);
+          }}
+          onTouchEnd={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            setSimulationTab('best');
+            if (userData.bestMatch) loadReplayGame(userData.bestMatch);
+          }}
+          style={{
+            border: '3px solid #000',
+            background: simulationTab === 'best' ? '#C4B5FD' : '#FFFFFF',
+            color: '#000',
+            borderRadius: '0px',
+            padding: '8px 8px',
+            fontSize: '12px',
+            fontWeight: 800,
+            cursor: 'pointer',
+            boxShadow: simulationTab === 'best' ? '3px 3px 0 0 #000' : 'none',
+          }}
+        >
+          Best Game
+        </button>
+        <button
+          type="button"
+          onClick={() => {
+            setSimulationTab('worst');
+            if (userData.worstMatch) loadReplayGame(userData.worstMatch);
+          }}
+          onTouchEnd={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            setSimulationTab('worst');
+            if (userData.worstMatch) loadReplayGame(userData.worstMatch);
+          }}
+          style={{
+            border: '3px solid #000',
+            background: simulationTab === 'worst' ? '#FF6B6B' : '#FFFFFF',
+            color: '#000',
+            borderRadius: '0px',
+            padding: '8px 8px',
+            fontSize: '12px',
+            fontWeight: 800,
+            cursor: 'pointer',
+            boxShadow: simulationTab === 'worst' ? '3px 3px 0 0 #000' : 'none',
+          }}
+        >
+          Worst Game
+        </button>
+        </div>
+      </div>
+    )}
 
-    {/* ================= THIN INLINE MOVE LEDGER (TOP OVERLAY) ================= */}
+    {/* ================= THIN INLINE MOVE LEDGER ================= */}
+    {!isScoreOnlyTab && (
     <div style={{
       width: '100%',
-      maxWidth: '1000px',
-      background: '#211f1c',
-      padding: '6px 16px',
+      maxWidth: isReplayMode ? '1080px' : '1000px',
+      background: theme.cardBg,
+      padding: isReplayMode ? '5px 10px' : '6px 16px',
       borderRadius: '6px',
-      fontSize: '13px',
+      fontSize: isReplayMode ? '12px' : '13px',
       display: 'flex',
       alignItems: 'center',
       gap: '8px',
       overflowX: 'auto',
       whiteSpace: 'nowrap',
-      border: '1px solid rgba(255,255,255,0.05)',
+      border: `1px solid ${theme.borderSoft}`,
       boxSizing: 'border-box',
-      color: '#fff'
+      color: theme.textPrimary
     }}>
-      <span style={{ fontSize: '11px', fontWeight: 700, textTransform: 'uppercase', color: '#989795', marginRight: '8px' }}>Moves:</span>
-      
+      <span style={{ fontSize: '11px', fontWeight: 700, textTransform: 'uppercase', color: theme.textMuted, marginRight: '8px' }}>Moves:</span>
+
       {isReplayMode ? (
         <>
           <span style={{ color: '#81b64c', fontWeight: 600, marginRight: '8px' }}>
@@ -1231,7 +1742,7 @@ return (
             <span
               key={`${m.color}-${idx}-${m.notation}`}
               style={{
-                color: idx === currentPly ? '#fff' : '#bababa',
+                color: idx === currentPly ? theme.textPrimary : theme.textSecondary,
                 fontWeight: idx === currentPly ? 800 : 500,
                 marginRight: '6px',
               }}
@@ -1239,7 +1750,7 @@ return (
               <span style={{ color: '#706e6b' }}>{Math.floor(idx / 2) + 1}{m.color === 'b' ? '...' : '.'}</span> {m.notation}
             </span>
           )) : (
-            <span style={{ color: '#989795' }}>Initial position</span>
+            <span style={{ color: theme.textMuted }}>Initial position</span>
           )}
         </>
       ) : (
@@ -1268,13 +1779,144 @@ return (
         </>
       )}
     </div>
+    )}
+
+    {isScoreOnlyTab && (
+  <div style={{
+    width: '100%',
+    background: 'rgba(23, 23, 23, 0.95)',
+    border: '2px solid rgba(212,167,44,0.55)',
+    borderRadius: '12px',
+    boxShadow: '0 8px 32px rgba(0,0,0,0.5)',
+    fontFamily: '"Oswald", sans-serif',
+    display: 'flex',
+    flexDirection: 'column',
+    overflow: 'hidden',
+    maxWidth: '800px', // Example constraints
+    margin: 'auto'
+  }}>
+    {/* Top Header Row (Logo placeholders, main scores) */}
+    <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr 1fr', alignItems: 'stretch' }}>
+      
+      {/* Left 'White' Team Card */}
+<div style={{ 
+  background: 'rgba(71, 100, 44, 0.73)', 
+  
+  color: '#000', 
+  display: 'flex', 
+  alignItems: 'center', 
+  justifyContent: 'center',
+  padding: '20px'
+}}>
+  <img
+    src="/pieces/white_king.png"
+    alt="White king"
+    style={{ width: '72px', height: '72px', objectFit: 'contain' }}
+  />
+</div>
+
+
+      {/* Center Scores and Names */}
+      <div style={{ background: '#111', color: '#fff', display: 'flex', flexDirection: 'column' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', padding: '12px 20px', textAlign: 'center', fontSize: '16px', fontWeight: 700, color: '#aaa', textTransform: 'uppercase' }}>
+          <div>White</div>
+          <div>Black</div>
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', padding: '10px 20px', alignItems: 'center' }}>
+          <div style={{ textAlign: 'center', fontSize: '82px', fontWeight: 900 }}>{whiteStats.totalScore}</div>
+          <div style={{ textAlign: 'center', fontSize: '82px', fontWeight: 900 }}>{blackStats.totalScore}</div>
+        </div>
+      </div>
+
+      {/* Right 'Black' Team Card */}
+      <div style={{ 
+        
+        background: 'rgba(71, 100, 44, 0.73)', 
+        
+        color: '#000', 
+        display: 'flex', 
+        alignItems: 'center', 
+        justifyContent: 'center',
+        padding: '20px'
+      }}>
+        <img
+          src="/pieces/black_king.png"
+          alt="Black king"
+          style={{ width: '72px', height: '72px', objectFit: 'contain' }}
+        />
+      </div>
+    </div>
+
+    {/* Details Section (Metrics list) */}
+    <div style={{ background: '#222', color: '#eee', fontSize: '16px' }}>
+      
+      {/* Row Helper Component */}
+      {[
+        { label: 'Players', white: whiteStats.players, black: blackStats.players, accent: '#81b64c' },
+        { label: 'Illegal moves', white: whiteStats.illegalMoves, black: blackStats.illegalMoves, accent: '#81b64c' },
+        { label: 'Captures', white: whiteStats.captures, black: blackStats.captures, accent: '#81b64c' },
+      ].map((stat, i) => (
+        <div key={i} style={{ 
+          display: 'grid', 
+          gridTemplateColumns: '1fr 1.5fr 1fr', 
+          alignItems: 'center', 
+          textAlign: 'center',
+          borderTop: '1px solid #333'
+        }}>
+          <div style={{ padding: '16px 20px', fontSize: '24px', fontWeight: 700, color: '#fff' }}>{stat.white}</div>
+          <div style={{ 
+            padding: '12px 20px', 
+            background: `${stat.accent}22`, 
+            color: stat.accent,
+            fontWeight: 800, 
+            textTransform: 'none',
+            letterSpacing: '0.4px',
+            fontSize: '16px',
+            height: '100%',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            borderLeft: `1px solid ${stat.accent}55`,
+            borderRight: `1px solid ${stat.accent}55`,
+          }}>{stat.label}</div>
+          <div style={{ padding: '16px 20px', fontSize: '24px', fontWeight: 700, color: '#fff' }}>{stat.black}</div>
+        </div>
+      ))}
+    </div>
+
+    {/* Separate User Score Section at Bottom */}
+    <div style={{
+      background: 'rgba(255, 255, 255, 0.04)',
+      padding: '20px',
+      borderTop: '2px solid rgba(212,167,44,0.35)',
+      textAlign: 'center',
+      marginTop: 'auto',
+      borderRadius: '0 0 12px 12px'
+    }}>
+      <div style={{
+        color: '#f2c94c',
+        fontSize: '16px',
+        fontWeight: 600,
+        textTransform: 'uppercase',
+        letterSpacing: '1px',
+        marginBottom: '4px'
+      }}>Your Score</div>
+      <div style={{
+        color: '#fff',
+        fontSize: '44px',
+        fontWeight: 900
+      }}>{userData?.score ?? 0}</div>
+    </div>
+  </div>
+)}
 
     {/* ================= MAIN RESPONSIVE CONTAINER ================= */}
+    {!isScoreOnlyTab && (
     <div style={{ 
       display: 'flex', 
-      flexDirection: 'row', 
-      flexWrap: 'wrap',
-      gap: '16px', 
+      flexDirection: isDesktopLayout ? 'row' : 'column', 
+      flexWrap: 'nowrap',
+      gap: isReplayMode ? '8px' : '16px', 
       width: '100%', 
       justifyContent: 'center',
       alignItems: 'flex-start'
@@ -1282,12 +1924,17 @@ return (
       
       {/* LEFT SIDE: BOARDS & PLAYERS */}
       <div style={{ 
-        flex: '1 1 400px', 
-        maxWidth: '500px', 
+        flex: isReplayMode && isDesktopLayout
+          ? `0 0 ${desktopBoardWidth}px`
+          : (isReplayMode ? '1 1 760px' : '1 1 400px'), 
+        maxWidth: isReplayMode
+          ? (isDesktopLayout ? `${desktopBoardWidth}px` : '100%')
+          : (isDesktopLayout ? `${desktopBoardWidth}px` : '500px'), 
         width: '100%', 
         display: 'flex', 
         flexDirection: 'column', 
-        gap: '8px' 
+        gap: isReplayMode ? '6px' : '8px',
+        margin: isReplayMode ? '0 auto' : undefined,
       }}>
         
         {/* BLOCK 1: OPPONENT/TOP PLAYER PANEL */}
@@ -1296,17 +1943,17 @@ return (
           justifyContent: 'space-between', 
           alignItems: 'center', 
           padding: '8px 12px', 
-          background: '#262421', 
+          background: theme.panelBg, 
           borderRadius: '6px',
-          border: '1px solid rgba(255,255,255,0.05)',
+          border: `1px solid ${theme.borderSoft}`,
           fontSize: '14px',
-          color: '#fff'
+          color: theme.textPrimary
         }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontWeight: 600 }}>
             <div style={badgeStyle(userData.userSide === 'white' ? '#000000' : '#ffffff')} />
             <span>{isReplayMode ? `u/${activeReplay?.opponent}` : 'ShadowChess GM'}</span>
             {renderReplayCaptureBadge(opponentColor)}
-            <span style={{ fontSize: '11px', color: '#989795', fontWeight: 400 }}>
+            <span style={{ fontSize: '11px', color: theme.textMuted, fontWeight: 400 }}>
               ({userData.userSide === 'white' ? 'Black' : 'White'})
             </span>
           </div>
@@ -1324,6 +1971,7 @@ return (
             ...boardStyle,
             width: '100%',
             height: 'auto',
+            maxWidth: isDesktopLayout ? `${desktopBoardWidth}px` : undefined,
             aspectRatio: '1 / 1',
             display: 'grid',
             gridTemplateColumns: 'repeat(8, 1fr)',
@@ -1331,11 +1979,21 @@ return (
             boxShadow: '0 8px 24px rgba(0,0,0,0.5)',
             borderRadius: '4px',
             overflow: 'hidden',
-            position: 'relative'
+            position: 'relative',
+            margin: isReplayMode && isDesktopLayout ? '0 auto' : undefined,
           }} 
           onDragOver={userData.hasSubmitted ? undefined : onBoardDragOver} 
           onDrop={userData.hasSubmitted ? undefined : onBoardDrop}
         >
+          {showBoardLoadingOverlay && !showScoreboardLoader && (
+            <LoadingPanel
+              title={selectingSide ? 'Entering board' : 'Rendering board'}
+              detail={selectingSide
+                ? 'Saving your side and preparing the live board.'
+                : 'Loading piece assets and finalizing the board view.'}
+              overlay
+            />
+          )}
           <div
             style={{
               position: 'absolute',
@@ -1350,8 +2008,9 @@ return (
             const row = Math.floor(i / 8);
             const col = i % 8;
             const isDark = (row + col) % 2 === 1;
-            const bg = isDark ? '#986B41' : '#FFFDD0'; 
+            const bg = isDark ? theme.boardDark : theme.boardLight;
             const piece = board[i];
+            const isReplayHighlightedSquare = i === replayHighlightFrom || i === replayHighlightTo;
             const labelColor = isDark ? 'rgba(244, 239, 228, 0.9)' : 'rgba(34, 32, 29, 0.78)';
             const isBlackView = userData.userSide === 'black';
             const showRankLabel = isBlackView ? col === 7 : col === 0;
@@ -1378,7 +2037,7 @@ return (
                     const piece = board[from];
                     if (isPieceMovable(piece)) {
                       const legal = getLegalMoves(board, from);
-                      if (legal.includes(i)) handleMove(from, i);
+                      if (legal.includes(i)) requestMove(from, i);
                     }
                   }
                   setDragging(null);
@@ -1402,6 +2061,11 @@ return (
                   justifyContent: 'center',
                   width: '100%',
                   height: '100%',
+                  outline: isReplayHighlightedSquare ? '3px solid rgba(212, 167, 44, 0.95)' : undefined,
+                  outlineOffset: isReplayHighlightedSquare ? '-3px' : undefined,
+                  boxShadow: isReplayHighlightedSquare
+                    ? 'inset 0 0 24px rgba(255, 221, 118, 0.42), 0 0 12px rgba(255, 221, 118, 0.16)'
+                    : undefined,
                   fontFamily: headerFontFamily,
                 }}
               >
@@ -1458,17 +2122,17 @@ return (
           justifyContent: 'space-between', 
           alignItems: 'center', 
           padding: '8px 12px', 
-          background: '#262421', 
+          background: theme.panelBg, 
           borderRadius: '6px',
-          border: '1px solid rgba(255,255,255,0.05)',
+          border: `1px solid ${theme.borderSoft}`,
           fontSize: '14px',
-          color: '#fff'
+          color: theme.textPrimary
         }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontWeight: 600 }}>
             <div style={badgeStyle(userData.userSide === 'black' ? '#000000' : '#ffffff')} />
             <span>u/{userData.username ?? 'anonymous'}</span>
             {renderReplayCaptureBadge(userColor)}
-            <span style={{ fontSize: '11px', color: '#989795', fontWeight: 400 }}>
+            <span style={{ fontSize: '11px', color: theme.textMuted, fontWeight: 400 }}>
               ({userData.userSide === 'black' ? 'Black' : 'White'})
             </span>
           </div>
@@ -1517,11 +2181,11 @@ return (
               textAlign: 'center',
               fontSize: '12px',
               fontWeight: 700,
-              color: '#d9d8d6',
+              color: theme.textPrimary,
               letterSpacing: '0.04em',
               textTransform: 'uppercase',
-              background: 'rgba(255,255,255,0.04)',
-              border: '1px solid rgba(255,255,255,0.08)',
+              background: theme.cardBg,
+              border: `1px solid ${theme.borderSoft}`,
               borderRadius: '999px',
               padding: '8px 12px',
               justifySelf: 'center',
@@ -1565,122 +2229,43 @@ return (
 
       </div>
 
-      {/* RIGHT SIDE / SIDEBAR CONTAINER (BLOCKS 4 & 5) */}
+      {!userData.hasSubmitted && (
       <div style={{ 
-        flex: '1 1 280px', 
+        flex: '1 1 280px',
         maxWidth: '500px',
         width: '100%',
         display: 'flex', 
         flexDirection: 'column', 
-        gap: '12px',
-        background: '#262421', 
+        gap: '8px',
+        background: theme.panelBg, 
         padding: '16px', 
         borderRadius: '8px',
         boxShadow: '0 6px 18px rgba(0,0,0,0.3)',
-        color: '#bababa',
+        color: theme.textSecondary,
         boxSizing: 'border-box',
-        border: '1px solid rgba(255,255,255,0.05)'
+        border: `1px solid ${theme.borderSoft}`
       }}>
-        
-        {!userData.hasSubmitted ? (
-          <>
-            {/* BLOCK 4: CAPTURED PIECES PANEL */}
-            <div>
-              <div style={{ fontSize: '11px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '6px', color: '#989795' }}>Material Captured</div>
-              
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '6px', background: 'rgba(255,255,255,0.03)', padding: '4px 8px', borderRadius: '4px' }}>
-                  <span style={{ fontSize: '11px', fontWeight: 600, minWidth: '40px', color: '#fff' }}>White:</span>
-                  <div style={{ display: 'flex', gap: '2px', flexWrap: 'wrap' }}>
-                    {capturedByWhite.length > 0 ? capturedByWhite.map((piece, index) => (
-                      <img key={`wcap-${index}`} src={`/pieces/${piece}.png`} alt={piece} style={{ width: 16, height: 16 }} />
-                    )) : <span style={{ color: '#535250', fontSize: '11px' }}>None</span>}
-                  </div>
-                </div>
-
-                <div style={{ display: 'flex', alignItems: 'center', gap: '6px', background: 'rgba(255,255,255,0.03)', padding: '4px 8px', borderRadius: '4px' }}>
-                  <span style={{ fontSize: '11px', fontWeight: 600, minWidth: '40px', color: '#fff' }}>Black:</span>
-                  <div style={{ display: 'flex', gap: '2px', flexWrap: 'wrap' }}>
-                    {capturedByBlack.length > 0 ? capturedByBlack.map((piece, index) => (
-                      <img key={`bcap-${index}`} src={`/pieces/${piece}.png`} alt={piece} style={{ width: 16, height: 16 }} />
-                    )) : <span style={{ color: '#535250', fontSize: '11px' }}>None</span>}
-                  </div>
-                </div>
-              </div>
+          <div style={{
+            background: 'rgba(255,255,255,0.03)',
+            borderRadius: '6px',
+            padding: '10px 12px',
+            border: `1px solid ${theme.borderSoft}`,
+          }}>
+            <div style={{ fontSize: '11px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '6px', color: theme.textMuted }}>
+              Move Progress
             </div>
-
-            {/* BLOCK 5: ACTIONS / SUBMIT BUTTON */}
-            <button 
-              onClick={handleOnClick}
-              disabled={submitting || moves.length !== 5}
-              style={{
-                marginTop: '4px',
-                background: moves.length === 5 ? '#81b64c' : '#535250', 
-                color: '#fff',
-                border: 'none',
-                padding: '10px 14px',
-                borderRadius: '4px',
-                fontSize: '14px',
-                fontWeight: 700,
-                cursor: moves.length === 5 && !submitting ? 'pointer' : 'not-allowed',
-                boxShadow: moves.length === 5 ? '0 3px 0 #5b8433' : '0 3px 0 #3a3937',
-                opacity: submitting ? 0.7 : 1,
-                transition: 'all 0.1s ease',
-                textAlign: 'center',
-                width: '100%'
-              }}
-            >
-              {submitting ? 'Submitting...' : `Submit Moves (${moves.length}/5)`}
-            </button>
-          </>
-        ) : (
-          /* ================= POST-MORTEM DASHBOARD SELECTOR ================= */
-          <div>
-            <h3 style={{ margin: '0 0 4px 0', color: '#fff' }}>Post-Game Dashboard</h3>
-            <p style={{ fontSize: '12px', color: '#989795', margin: '0 0 16px 0' }}>
-              Aggregate Score: <span style={{ color: '#fff', fontWeight: 700 }}>{userData.score} pts</span>
-            </p>
-            
-            {/* Best Match Button Card */}
-            {userData.bestMatch ? (
-              <div style={{ background: 'rgba(129,182,76,0.1)', border: '1px solid #81b64c', padding: '12px', borderRadius: '6px', marginBottom: '12px' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', marginBottom: '8px' }}>
-                  <span style={{ fontWeight: 'bold', color: '#81b64c' }}>🏆 Best Match</span>
-                  <span style={{ color: '#fff', fontWeight: 600 }}>+{userData.bestMatch.score} pts</span>
-                </div>
-                <button 
-                  onClick={() => loadReplayGame(userData.bestMatch)}
-                  style={{ width: '100%', background: '#81b64c', border: 'none', color: '#fff', padding: '8px', borderRadius: '4px', fontWeight: 600, cursor: 'pointer' }}
-                >
-                  Simulate vs u/{userData.bestMatch.opponent}
-                </button>
-              </div>
-            ) : (
-              <p style={{ fontSize: '12px', color: '#535250' }}>No top performance record found.</p>
-            )}
-
-            {/* Worst Match Button Card */}
-            {userData.worstMatch ? (
-              <div style={{ background: 'rgba(192,24,18,0.1)', border: '1px solid #c01812', padding: '12px', borderRadius: '6px' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', marginBottom: '8px' }}>
-                  <span style={{ fontWeight: 'bold', color: '#c01812' }}>📉 Worst Match</span>
-                  <span style={{ color: '#fff', fontWeight: 600 }}>{userData.worstMatch.score} pts</span>
-                </div>
-                <button 
-                  onClick={() => loadReplayGame(userData.worstMatch)}
-                  style={{ width: '100%', background: '#c01812', border: 'none', color: '#fff', padding: '8px', borderRadius: '4px', fontWeight: 600, cursor: 'pointer' }}
-                >
-                  Simulate vs u/{userData.worstMatch.opponent}
-                </button>
-              </div>
-            ) : (
-              <p style={{ fontSize: '12px', color: '#535250' }}>No low performance record found.</p>
-            )}
+            <div style={{ fontSize: '24px', fontWeight: 800, color: theme.textPrimary, lineHeight: 1.2 }}>
+              Move: {Math.min(moves.length + 1, 5)}/5
+            </div>
+            <div style={{ fontSize: '12px', marginTop: '6px', color: theme.textMuted }}>
+              Your game auto-submits after move 5.
+            </div>
           </div>
-        )}
-
       </div>
+      )}
+
     </div>
+    )}
 
     {/* GHOST DRAG ELEMENT */}
     {ghost && (
@@ -1693,6 +2278,9 @@ return (
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <Chessboard />
+    <>
+      <style>{'@keyframes asyncchess-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }'}</style>
+      <Chessboard />
+    </>
   </StrictMode>
 );

@@ -4,8 +4,11 @@ import games from '../../../src/shared/anand_games.json';
 import type {
   GameData,
   InitResponse,
+  Leaderboards,
   MoveInput,
+  ScoreboardEntry,
   SetSideResponse,
+  SimulationStats,
   SubmitMovesResponse,
 } from '../../shared/api';
 import { calculateMidgameZeroSumScore } from '../core/chessScoring';
@@ -17,6 +20,102 @@ type ErrorResponse = {
 
 
 export const api = new Hono();
+
+const isGameClosed = (gameData: GameData | null | undefined) =>
+  Boolean(gameData?.closesAt && Date.now() >= gameData.closesAt);
+
+const getPlayerCounts = async (postId: string) => ({
+  white: parseInt((await redis.get(`playerCount_${postId}_white`)) || '0'),
+  black: parseInt((await redis.get(`playerCount_${postId}_black`)) || '0'),
+});
+
+const emptySimulationStats = (): SimulationStats => ({
+  white: { players: 0, illegalMoves: 0, captures: 0, totalScore: 0 },
+  black: { players: 0, illegalMoves: 0, captures: 0, totalScore: 0 },
+});
+
+const normalizeSimulationStats = (
+  raw: string | null | undefined,
+  playerCounts: { white: number; black: number }
+): SimulationStats => {
+  const base = emptySimulationStats();
+  if (!raw) {
+    return {
+      ...base,
+      white: { ...base.white, players: playerCounts.white },
+      black: { ...base.black, players: playerCounts.black },
+    };
+  }
+
+  try {
+    const parsed = JSON.parse(raw) as Partial<SimulationStats>;
+    return {
+      white: {
+        players: playerCounts.white,
+        illegalMoves: Number(parsed.white?.illegalMoves ?? 0),
+        captures: Number(parsed.white?.captures ?? 0),
+        totalScore: Number(parsed.white?.totalScore ?? 0),
+      },
+      black: {
+        players: playerCounts.black,
+        illegalMoves: Number(parsed.black?.illegalMoves ?? 0),
+        captures: Number(parsed.black?.captures ?? 0),
+        totalScore: Number(parsed.black?.totalScore ?? 0),
+      },
+    };
+  } catch {
+    return {
+      ...base,
+      white: { ...base.white, players: playerCounts.white },
+      black: { ...base.black, players: playerCounts.black },
+    };
+  }
+};
+
+const getSimulationStats = async (postId: string, playerCounts: { white: number; black: number }) => {
+  const key = `game_${postId}_simulation_stats`;
+  const raw = await redis.get(key);
+  const normalized = normalizeSimulationStats(raw, playerCounts);
+  await redis.set(key, JSON.stringify(normalized));
+  return normalized;
+};
+
+const getLeaderboardEntries = async (postId: string, side: 'white' | 'black'): Promise<ScoreboardEntry[]> => {
+  const rosterKey = `game_${postId}_${side}_players`;
+  const rosterData = await redis.get(rosterKey);
+  const usernames: string[] = rosterData ? JSON.parse(rosterData) : [];
+
+  const entries = await Promise.all(
+    usernames.map(async (username) => ({
+      username,
+      score: Number(await redis.get(`game_${postId}_${username}_score`) ?? 0),
+    }))
+  );
+
+  return entries;
+};
+
+const getLeaderboards = async (postId: string): Promise<Leaderboards> => {
+  const [whiteEntries, blackEntries] = await Promise.all([
+    getLeaderboardEntries(postId, 'white'),
+    getLeaderboardEntries(postId, 'black'),
+  ]);
+
+  const buildSideBoard = (entries: ScoreboardEntry[]) => {
+    const byTopScore = [...entries].sort((left, right) => right.score - left.score || left.username.localeCompare(right.username));
+    const byBottomScore = [...entries].sort((left, right) => left.score - right.score || left.username.localeCompare(right.username));
+
+    return {
+      top: byTopScore.slice(0, 3),
+      bottom: byBottomScore.slice(0, 3),
+    };
+  };
+
+  return {
+    white: buildSideBoard(whiteEntries),
+    black: buildSideBoard(blackEntries),
+  };
+};
 
 api.get('/init', async (c) => {
   const { postId } = context;
@@ -46,12 +145,11 @@ api.get('/init', async (c) => {
     const hasSubmitted = (await redis.get(`game_${postId}_${username}_has_submitted`)) === 'true';
     const score = await redis.get(`game_${postId}_${username}_score`);
     const movesData = await redis.get(`game_${postId}_${username}_moves`);
-    const playerCounts = {
-      white: parseInt((await redis.get(`playerCount_${postId}_white`)) || '0'),
-      black: parseInt((await redis.get(`playerCount_${postId}_black`)) || '0'),
-    };
+    const playerCounts = await getPlayerCounts(postId);
     const bestMatchData = await redis.get(`game_${postId}_${username}_best_match`);
     const worstMatchData = await redis.get(`game_${postId}_${username}_worst_match`);
+    const simulationStats = await getSimulationStats(postId, playerCounts);
+    const leaderboards = await getLeaderboards(postId);
     await redis.set(`game_${postId}_fen`, gameData?.fen!); // Ensure the side is stored even if null
 
     return c.json<InitResponse>({
@@ -62,10 +160,13 @@ api.get('/init', async (c) => {
       gameData,
       userSide: (savedSide as 'white' | 'black') || null,
       playerCounts: playerCounts,
-      score: score ? Number(score) : null,      hasSubmitted: hasSubmitted,
+      score: score ? Number(score) : null,
+      hasSubmitted: hasSubmitted,
       moves: movesData ? JSON.parse(movesData) : [],
       bestMatch: bestMatchData ? JSON.parse(bestMatchData) : null, // Placeholder for best match data
       worstMatch: worstMatchData ? JSON.parse(worstMatchData) : null, // Placeholder for worst match data
+      simulationStats,
+      leaderboards,
     });
   } catch (error) {
     console.error(`API Init Error for post ${postId}:`, error);
@@ -88,6 +189,12 @@ api.post('/set-side', async (c) => {
   }
 
   try {
+    const gameDataJson = await redis.get(`game_${postId}`);
+    const gameData = gameDataJson ? (JSON.parse(gameDataJson) as GameData) : null;
+    if (isGameClosed(gameData)) {
+      return c.json<ErrorResponse>({ status: 'error', message: 'This game is closed.' }, 400);
+    }
+
     const body = await c.req.json<{ side: 'white' | 'black' }>();
     if (!body.side || (body.side !== 'white' && body.side !== 'black')) {
       return c.json<ErrorResponse>({ status: 'error', message: 'Invalid side. Must be "white" or "black"' }, 400);
@@ -95,9 +202,30 @@ api.post('/set-side', async (c) => {
 
     const username = (await reddit.getCurrentUsername()) ?? 'anonymous';
     
-    // Store the chosen side using a composite key: game_{postId}_{username}_side
     const redisKey = `game_${postId}_${username}_side`;
+    const previousSide = await redis.get(redisKey);
     await redis.set(redisKey, body.side);
+
+    if (previousSide === body.side) {
+      const playerCounts = await getPlayerCounts(postId);
+      await getSimulationStats(postId, playerCounts);
+      return c.json<SetSideResponse>({
+        status: 'success',
+        postId,
+        username,
+        side: body.side,
+      });
+    }
+
+    if (previousSide === 'white' || previousSide === 'black') {
+      await redis.incrBy(`playerCount_${postId}_${previousSide}`, -1);
+      const previousRosterKey = `game_${postId}_${previousSide}_players`;
+      const previousRosterData = await redis.get(previousRosterKey);
+      const previousRoster: string[] = previousRosterData ? JSON.parse(previousRosterData) : [];
+      const filteredRoster = previousRoster.filter((player) => player !== username);
+      await redis.set(previousRosterKey, JSON.stringify(filteredRoster));
+    }
+
     // 3. Add user to their newly selected team roster
     const currentRosterKey = `game_${postId}_${body.side}_players`;
     const currentRosterData = await redis.get(currentRosterKey);
@@ -110,6 +238,8 @@ api.post('/set-side', async (c) => {
   
     console.log(`Set side for user ${username} in post ${postId} to ${body.side}`);
     await redis.incrBy(`playerCount_${postId}_${body.side}`, 1); // Increment the player count for the chosen side
+    const playerCounts = await getPlayerCounts(postId);
+    await getSimulationStats(postId, playerCounts);
 
     return c.json<SetSideResponse>({
       
@@ -132,6 +262,12 @@ api.post('/submit-moves', async (c) => {
   }
 
   try {
+    const gameDataJson = await redis.get(`game_${postId}`);
+    const gameData = gameDataJson ? (JSON.parse(gameDataJson) as GameData) : null;
+    if (isGameClosed(gameData)) {
+      return c.json<ErrorResponse>({ status: 'error', message: 'This game is closed.' }, 400);
+    }
+
     const body = await c.req.json<{ moves: MoveInput[] }>();
     
     // Validate that moves array exists and has exactly 5 moves
@@ -149,6 +285,7 @@ api.post('/submit-moves', async (c) => {
         typeof move.notation !== 'string' ||
         typeof move.pieceFrom !== 'number' ||
         typeof move.pieceTo !== 'number' ||
+        (move.promotion !== undefined && move.promotion !== 'knight' && move.promotion !== 'bishop' && move.promotion !== 'rook' && move.promotion !== 'queen') ||
         move.pieceFrom < 0 ||
         move.pieceFrom > 63 ||
         move.pieceTo < 0 ||
@@ -189,7 +326,15 @@ api.post('/update-scores', async (c) => {
   }
 
   try {
+    const gameDataJson = await redis.get(`game_${postId}`);
+    const gameData = gameDataJson ? (JSON.parse(gameDataJson) as GameData) : null;
+    if (isGameClosed(gameData)) {
+      return c.json({ status: 'error', message: 'This game is closed.' }, 400);
+    }
+
     const username = (await reddit.getCurrentUsername()) ?? 'anonymous';
+    const playerCounts = await getPlayerCounts(postId);
+    let simulationStats = await getSimulationStats(postId, playerCounts);
 
     // 1. Get the user's side and moves from Redis
     const sideKey = `game_${postId}_${username}_side`;
@@ -243,6 +388,13 @@ api.post('/update-scores', async (c) => {
 
       // b. Pass the moves to calculateMidgameZeroSumScore
       const scoresResult = calculateMidgameZeroSumScore(initialFen, whiteMoves, blackMoves);
+
+      simulationStats.white.totalScore += scoresResult.white;
+      simulationStats.black.totalScore += scoresResult.black;
+      simulationStats.white.captures += scoresResult.whiteCaptures;
+      simulationStats.black.captures += scoresResult.blackCaptures;
+      simulationStats.white.illegalMoves += scoresResult.whiteIllegalMoves;
+      simulationStats.black.illegalMoves += scoresResult.blackIllegalMoves;
 
       // Extract context points based on side assignment
       const userEarnedDelta = userSide === 'white' ? scoresResult.white : scoresResult.black;
@@ -305,6 +457,13 @@ api.post('/update-scores', async (c) => {
     const finalUserScore = existingUserScore + accumulatedUserScoreDelta;
     await redis.set(userScoreKey, String(finalUserScore));
 
+    const latestPlayerCounts = await getPlayerCounts(postId);
+    simulationStats = {
+      white: { ...simulationStats.white, players: latestPlayerCounts.white },
+      black: { ...simulationStats.black, players: latestPlayerCounts.black },
+    };
+    await redis.set(`game_${postId}_simulation_stats`, JSON.stringify(simulationStats));
+
     // Flag the user as scored/fully processed
     await redis.set(`game_${postId}_${username}_has_submitted`, 'true');
 
@@ -313,7 +472,8 @@ api.post('/update-scores', async (c) => {
       username,
       userSide,
       updatedScore: finalUserScore,
-      matchesEvaluated: matchesEvaluatedCount
+      matchesEvaluated: matchesEvaluatedCount,
+      simulationStats,
     });
 
   } catch (error) {

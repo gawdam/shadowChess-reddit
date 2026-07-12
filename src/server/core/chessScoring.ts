@@ -5,6 +5,13 @@ type GameScore = {
   black: number;
 };
 
+export type GameScoreBreakdown = GameScore & {
+  whiteCaptures: number;
+  blackCaptures: number;
+  whiteIllegalMoves: number;
+  blackIllegalMoves: number;
+};
+
 type PieceColor = 'w' | 'b';
 type PieceType = 'p' | 'n' | 'b' | 'r' | 'q' | 'k';
 
@@ -333,9 +340,13 @@ export function calculateMidgameZeroSumScore(
   initialFen: string,
   whiteMoves: MoveInput[],
   blackMoves: MoveInput[]
-): GameScore {
+): GameScoreBreakdown {
   const board = parseFenBoard(initialFen);
   let relativeAdvantage = 0;
+  let whiteCaptures = 0;
+  let blackCaptures = 0;
+  let whiteIllegalMoves = 0;
+  let blackIllegalMoves = 0;
   const startingTurn = getStartingTurn(initialFen);
 
   for (let round = 0; round < 5; round++) {
@@ -351,8 +362,20 @@ export function calculateMidgameZeroSumScore(
 
     for (const orderedMove of orderedMoves) {
       if (!orderedMove.move) {
+        if (orderedMove.color === 'w') {
+          whiteIllegalMoves += 1;
+        } else {
+          blackIllegalMoves += 1;
+        }
         relativeAdvantage += orderedMove.color === 'w' ? -15 : 15;
-        return { white: relativeAdvantage, black: -relativeAdvantage };
+        return {
+          white: relativeAdvantage,
+          black: -relativeAdvantage,
+          whiteCaptures,
+          blackCaptures,
+          whiteIllegalMoves,
+          blackIllegalMoves,
+        };
       }
 
       const moveNotation = typeof orderedMove.move === 'string'
@@ -362,8 +385,28 @@ export function calculateMidgameZeroSumScore(
       const appliedMove = applyMove(board, orderedMove.color, orderedMove.move);
 
       if (!appliedMove) {
+        if (orderedMove.color === 'w') {
+          whiteIllegalMoves += 1;
+        } else {
+          blackIllegalMoves += 1;
+        }
         relativeAdvantage += orderedMove.color === 'w' ? -15 : 15;
-        return { white: relativeAdvantage, black: -relativeAdvantage };
+        return {
+          white: relativeAdvantage,
+          black: -relativeAdvantage,
+          whiteCaptures,
+          blackCaptures,
+          whiteIllegalMoves,
+          blackIllegalMoves,
+        };
+      }
+
+      if (appliedMove.captured) {
+        if (orderedMove.color === 'w') {
+          whiteCaptures += 1;
+        } else {
+          blackCaptures += 1;
+        }
       }
 
       const swing = scoreCapture(appliedMove.captured, parsedMove?.promotion);
@@ -374,5 +417,9 @@ export function calculateMidgameZeroSumScore(
   return {
     white: relativeAdvantage,
     black: -relativeAdvantage,
+    whiteCaptures,
+    blackCaptures,
+    whiteIllegalMoves,
+    blackIllegalMoves,
   };
 }

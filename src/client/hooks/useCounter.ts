@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useState } from 'react';
 import type {
   InitResponse,
+  Leaderboards,
   MatchRecord,
   MoveInput,
+  SimulationStats,
   StoredMove,
 } from '../../shared/api';
 
@@ -22,7 +24,29 @@ type CounterState = {
   gameData: InitResponse['gameData'];
   loading: boolean;
   playerCounts: { white: number; black: number } | null;
+  simulationStats: SimulationStats;
+  leaderboards: Leaderboards;
   userData: UserData; // Unified data block
+};
+
+const defaultSimulationStats: SimulationStats = {
+  white: {
+    players: 0,
+    illegalMoves: 0,
+    captures: 0,
+    totalScore: 0,
+  },
+  black: {
+    players: 0,
+    illegalMoves: 0,
+    captures: 0,
+    totalScore: 0,
+  },
+};
+
+const defaultLeaderboards: Leaderboards = {
+  white: { top: [], bottom: [] },
+  black: { top: [], bottom: [] },
 };
 
 export const useCounter = () => {
@@ -31,6 +55,8 @@ export const useCounter = () => {
     gameData: null,
     loading: true,
     playerCounts: null,
+    simulationStats: defaultSimulationStats,
+    leaderboards: defaultLeaderboards,
     userData: {
       username: 'anonymous',
       userSide: null,
@@ -43,45 +69,60 @@ export const useCounter = () => {
   });
   const [postId, setPostId] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState<boolean>(false);
+  const [selectingSide, setSelectingSide] = useState<boolean>(false);
+  const [refreshing, setRefreshing] = useState<boolean>(false);
 
-  // Fetch initial data
-// Fetch initial data
-  useEffect(() => {
-    const init = async () => {
-      try {
-        const res = await fetch('/api/init');
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const data: InitResponse = await res.json();
-        if (data.type !== 'init') throw new Error('Unexpected response');
-        
-        setState((prev) => ({
-          ...prev, 
-          count: data.count,
-          gameData: data.gameData ?? null,
-          loading: false,
-          playerCounts: data.playerCounts ?? null,
-          userData: {
-            username: data.username ?? 'anonymous',
-            userSide: data.userSide ?? null,
-            // 1. READ PERMANENT STATE FROM BACKEND DATA INSTANTLY
-            hasSubmitted: data.hasSubmitted ?? false, 
-            moves: data.moves ?? [],
-            score: data.score ?? null,
-            bestMatch: data.bestMatch ?? null,   // New field
-            worstMatch: data.worstMatch ?? null,  // New field
-          }
-        }));
-        setPostId(data.postId);
-      } catch (err) {
-        console.error('Failed to init counter', err);
-        setState((prev) => ({ ...prev, loading: false }));
+  const refreshData = useCallback(async (mode: 'initial' | 'background' = 'background') => {
+    if (mode === 'initial') {
+      setState((prev) => ({ ...prev, loading: true }));
+    } else {
+      setRefreshing(true);
+    }
+
+    try {
+      const res = await fetch('/api/init');
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data: InitResponse = await res.json();
+      if (data.type !== 'init') throw new Error('Unexpected response');
+
+      setState((prev) => ({
+        ...prev,
+        count: data.count,
+        gameData: data.gameData ?? null,
+        loading: false,
+        playerCounts: data.playerCounts ?? null,
+        simulationStats: data.simulationStats ?? defaultSimulationStats,
+        leaderboards: data.leaderboards ?? defaultLeaderboards,
+        userData: {
+          username: data.username ?? 'anonymous',
+          userSide: data.userSide ?? null,
+          hasSubmitted: data.hasSubmitted ?? false,
+          moves: data.moves ?? [],
+          score: data.score ?? null,
+          bestMatch: data.bestMatch ?? null,
+          worstMatch: data.worstMatch ?? null,
+        },
+      }));
+      setPostId(data.postId);
+      return data;
+    } catch (err) {
+      console.error('Failed to init counter', err);
+      setState((prev) => ({ ...prev, loading: false }));
+      return null;
+    } finally {
+      if (mode === 'background') {
+        setRefreshing(false);
       }
-    };
-    void init();
+    }
   }, []);
+
+  useEffect(() => {
+    void refreshData('initial');
+  }, [refreshData]);
 
   // Update chosen side safely within unified structure
   const selectSide = useCallback(async (side: 'white' | 'black') => {
+    setSelectingSide(true);
     setState((prev) => ({
       ...prev,
       userData: { ...prev.userData, userSide: side }
@@ -100,6 +141,8 @@ export const useCounter = () => {
         ...prev,
         userData: { ...prev.userData, userSide: null }
       }));
+    } finally {
+      setSelectingSide(false);
     }
   }, []);
 
@@ -132,16 +175,12 @@ export const useCounter = () => {
       const scoreData = await scoreRes.json();
       if (!scoreRes.ok) throw new Error(scoreData.message || `HTTP ${scoreRes.status}`);
 
-      // Consolidate verified state metrics returned straight from your backend source of truth
       setState((prev) => ({
         ...prev,
-        userData: {
-          ...prev.userData,
-          hasSubmitted: true,
-          moves: moveRecords,
-          score: scoreData.updatedScore // Pulled directly from the server calculation response
-        }
+        simulationStats: scoreData.simulationStats ?? prev.simulationStats,
       }));
+
+      await refreshData('background');
 
       return true;
     } catch (err) {
@@ -159,5 +198,8 @@ export const useCounter = () => {
     submitting,
     submitMoves,
     selectSide,
+    refreshData,
+    selectingSide,
+    refreshing,
   } as const;
 };

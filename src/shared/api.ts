@@ -3,15 +3,45 @@ export type GameData = {
   turn: 'w' | 'b';
   meta: Record<string, string | undefined>;
   seed: string;
+  createdAt: number;
+  closesAt: number;
 };
 
 export type StoredMove = {
   notation: string;
   pieceFrom: number;
   pieceTo: number;
+  promotion?: 'knight' | 'bishop' | 'rook' | 'queen';
 };
 
 export type MoveInput = string | StoredMove;
+
+export type SideSimulationStats = {
+  players: number;
+  illegalMoves: number;
+  captures: number;
+  totalScore: number;
+};
+
+export type SimulationStats = {
+  white: SideSimulationStats;
+  black: SideSimulationStats;
+};
+
+export type ScoreboardEntry = {
+  username: string;
+  score: number;
+};
+
+export type SideLeaderboards = {
+  top: ScoreboardEntry[];
+  bottom: ScoreboardEntry[];
+};
+
+export type Leaderboards = {
+  white: SideLeaderboards;
+  black: SideLeaderboards;
+};
 
 export type InitResponse = {
   type: 'init';
@@ -29,6 +59,8 @@ export type InitResponse = {
   moves: MoveInput[];
   bestMatch: MatchRecord | null;
   worstMatch: MatchRecord | null;
+  simulationStats: SimulationStats;
+  leaderboards: Leaderboards;
 };
 
 export type MatchRecord = {
