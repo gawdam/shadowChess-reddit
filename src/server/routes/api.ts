@@ -1,5 +1,5 @@
 import { Hono } from 'hono';
-import { context, media, redis, reddit } from '@devvit/web/server';
+import { context, redis, reddit } from '@devvit/web/server';
 import games from '../../../src/shared/pro_games_base_dataset.json';
 import type {
   GameData,
@@ -25,52 +25,30 @@ type PostReplayCommentRequest = {
   showGame: boolean;
   matchType: 'best' | 'worst';
   moves: MoveInput[];
-  gifDataUrl?: string;
+  score: number;
 };
 
 const toMoveNotation = (move: MoveInput) =>
   typeof move === 'string' ? move : move.notation;
 
-const parseGifDataUrl = (dataUrl: string) => {
-  const match = dataUrl.match(/^data:(image\/gif);base64,([A-Za-z0-9+/=]+)$/);
-  if (!match) return null;
-  return {
-    mimeType: match[1] ?? 'image/gif',
-    base64: match[2] ?? '',
-  };
+const toUserHandle = (rawUsername: string) => {
+  const normalized = rawUsername.trim().replace(/^u\//, '');
+  return `u/${normalized}`;
 };
 
-const uploadGifDataUrlToTempHost = async (gifDataUrl: string): Promise<string | null> => {
-  const parsed = parseGifDataUrl(gifDataUrl);
-  if (!parsed) return null;
+const formatMovesWithNumbers = (moves: MoveInput[]) => {
+  const notations = moves.map(toMoveNotation);
+  const numberedMoves: string[] = [];
 
-  try {
-    const buffer = Buffer.from(parsed.base64, 'base64');
-    const form = new FormData();
-    form.append(
-      'file',
-      new Blob([buffer], { type: parsed.mimeType }),
-      'shadowchess-replay.gif'
-    );
-
-    const response = await fetch('https://tmpfiles.org/api/v1/upload', {
-      method: 'POST',
-      body: form,
-    });
-
-    if (!response.ok) return null;
-
-    const data = (await response.json()) as { data?: { url?: string } };
-    const hostedUrl = data.data?.url;
-    if (!hostedUrl) return null;
-
-    // tmpfiles serves direct downloads via /dl/<id>
-    return hostedUrl.replace('https://tmpfiles.org/', 'https://tmpfiles.org/dl/');
-  } catch {
-    return null;
+  for (let i = 0; i < notations.length; i += 2) {
+    const moveNo = Math.floor(i / 2) + 1;
+    const first = notations[i] ?? '';
+    const second = notations[i + 1] ?? '';
+    numberedMoves.push(second ? `${moveNo}. ${first} ${second}` : `${moveNo}. ${first}`);
   }
-};
 
+  return numberedMoves.join(' ');
+};
 
 export const api = new Hono();
 
@@ -543,12 +521,12 @@ api.post('/post-replay-comment', async (c) => {
 
   try {
     const body = await c.req.json<PostReplayCommentRequest>();
+    const currentUsername = (await reddit.getCurrentUsername()) ?? 'anonymous';
     const opponent = (body.opponent ?? '').trim();
     const userComment = (body.userComment ?? '').trim();
     const showGame = Boolean(body.showGame);
-    const tagOpponent = Boolean(body.tagOpponent);
-    const matchType = body.matchType === 'worst' ? 'worst' : 'best';
     const moves = Array.isArray(body.moves) ? body.moves : [];
+    const score = Number(body.score ?? 0);
 
     if (!opponent) {
       return c.json<ErrorResponse>({ status: 'error', message: 'Opponent is required.' }, 400);
@@ -558,39 +536,24 @@ api.post('/post-replay-comment', async (c) => {
       return c.json<ErrorResponse>({ status: 'error', message: 'Moves are required to show the game.' }, 400);
     }
 
-    let gifLine: string | null = null;
-    if (showGame && body.gifDataUrl) {
-      const tempUrl = await uploadGifDataUrlToTempHost(body.gifDataUrl);
-      if (tempUrl) {
-        try {
-          const uploaded = await media.upload({ url: tempUrl, type: 'gif' });
-          gifLine = `Replay GIF: ${uploaded.mediaUrl}`;
-        } catch {
-          gifLine = `Replay GIF: ${tempUrl}`;
-        }
-      }
-    }
-
-    const moveList = moves.map(toMoveNotation).join(' ');
+    const authorHandle = toUserHandle(currentUsername);
+    const opponentHandle = toUserHandle(opponent);
+    const moveList = formatMovesWithNumbers(moves);
+    const scoreOutcome = score >= 0 ? 'wins' : 'loses';
     const lines: string[] = [];
-    lines.push(`${matchType === 'best' ? 'Best' : 'Worst'} game replay`);
-
-    if (tagOpponent) {
-      lines.push(`u/${opponent}`);
-    }
-
-    if (userComment.length > 0) {
-      lines.push(userComment);
-    }
+    lines.push(`${authorHandle} vs ${opponentHandle}`);
+    lines.push(`Score: ${authorHandle} ${scoreOutcome} with score ${score.toFixed(2)}`);
 
     if (showGame) {
-      if (gifLine) lines.push(gifLine);
       lines.push(`Moves: ${moveList}`);
     }
 
+    lines.push(`${authorHandle} says : "${userComment}"`);
+
     const finalText = lines.join('\n\n');
+    const normalizedPostId = postId.startsWith('t3_') ? postId.slice(3) : postId;
     const comment = await reddit.submitComment({
-      id: `t3_${postId}`,
+      id: `t3_${normalizedPostId}`,
       text: finalText,
     });
 

@@ -2,7 +2,6 @@ import './index.css';
 
 import React, { StrictMode, useState, useRef } from 'react';
 import { createRoot } from 'react-dom/client';
-import { GIFEncoder, applyPalette, quantize } from 'gifenc';
 import { useCounter } from './hooks/useCounter';
 import type { MatchRecord, MoveInput, StoredMove } from '../shared/api';
 import { HowToPlayDialog } from './howToPlayDialog';
@@ -292,7 +291,6 @@ const Chessboard = () => {
     const [showHowToPlay, setShowHowToPlay] = useState(false);
     const [showReplayShareCard, setShowReplayShareCard] = useState(false);
     const [shareComment, setShareComment] = useState('');
-    const [shareShowGame, setShareShowGame] = useState(true);
     const [shareTagOpponent, setShareTagOpponent] = useState(true);
     const [sharePosting, setSharePosting] = useState(false);
     const [dismissedShareCardByKey, setDismissedShareCardByKey] = useState<Record<string, boolean>>({});
@@ -1049,6 +1047,12 @@ const Chessboard = () => {
     };
 
     const onTouchMove = (e: React.TouchEvent) => {
+      const hasBoardTouchInteraction =
+        touchFromRef.current !== null ||
+        touchTapStartRef.current !== null ||
+        dragging !== null;
+      if (!hasBoardTouchInteraction) return;
+
       e.preventDefault();
       const t = e.touches && e.touches[0];
       if (!t) return;
@@ -1070,6 +1074,12 @@ const Chessboard = () => {
     };
 
     const onTouchEnd = (e: React.TouchEvent) => {
+      const hasBoardTouchInteraction =
+        touchFromRef.current !== null ||
+        touchTapStartRef.current !== null ||
+        dragging !== null;
+      if (!hasBoardTouchInteraction) return;
+
       e.preventDefault();
       const t = e.changedTouches && e.changedTouches[0];
       const endX = t ? t.clientX : 0;
@@ -1312,107 +1322,28 @@ const Chessboard = () => {
       setShowReplayShareCard(false);
     };
 
-    const loadPieceImage = (piece: string) =>
-      new Promise<HTMLImageElement>((resolve, reject) => {
-        const img = new Image();
-        img.onload = () => resolve(img);
-        img.onerror = () => reject(new Error(`Failed to load piece image: ${piece}`));
-        img.src = `/pieces/${piece}.png`;
-      });
-
-    const generateReplayGifDataUrl = async () => {
-      if (replayPositions.length <= 1) return null;
-
-      const frameStates = replayPositions.map((position) => position.board);
-      const cell = 48;
-      const width = cell * 8;
-      const height = cell * 8;
-      const canvas = document.createElement('canvas');
-      canvas.width = width;
-      canvas.height = height;
-      const ctx = canvas.getContext('2d');
-      if (!ctx) return null;
-
-      const pieceNames = Array.from(new Set(frameStates.flatMap((state) => state.filter((piece): piece is string => Boolean(piece)))));
-      const pieceImages = new Map<string, HTMLImageElement>();
-      await Promise.all(
-        pieceNames.map(async (piece) => {
-          pieceImages.set(piece, await loadPieceImage(piece));
-        })
-      );
-
-      const gif = GIFEncoder();
-      for (let frameIndex = 0; frameIndex < frameStates.length; frameIndex += 1) {
-        const boardState = frameStates[frameIndex]!;
-
-        for (let i = 0; i < 64; i += 1) {
-          const row = Math.floor(i / 8);
-          const col = i % 8;
-          const isDark = (row + col) % 2 === 1;
-          ctx.fillStyle = isDark ? theme.boardDark : theme.boardLight;
-          ctx.fillRect(col * cell, row * cell, cell, cell);
-
-          const piece = boardState[i];
-          if (piece) {
-            const pieceImage = pieceImages.get(piece);
-            if (pieceImage) {
-              const inset = 4;
-              ctx.drawImage(pieceImage, col * cell + inset, row * cell + inset, cell - inset * 2, cell - inset * 2);
-            }
-          }
-        }
-
-        const imageData = ctx.getImageData(0, 0, width, height);
-        const palette = quantize(imageData.data, 256);
-        const indexed = applyPalette(imageData.data, palette);
-        gif.writeFrame(indexed, width, height, {
-          palette,
-          delay: frameIndex === 0 ? 700 : 550,
-          repeat: 0,
-        });
-      }
-
-      gif.finish();
-      const gifBytes = Uint8Array.from(gif.bytes());
-      const gifBlob = new Blob([gifBytes.buffer], { type: 'image/gif' });
-      const dataUrl = await new Promise<string>((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = () => resolve(String(reader.result ?? ''));
-        reader.onerror = () => reject(new Error('Failed to serialize GIF data URL'));
-        reader.readAsDataURL(gifBlob);
-      });
-
-      return dataUrl;
-    };
-
     const postReplayShareComment = async () => {
       if (!activeReplay || !gameData) return;
 
       setSharePosting(true);
       try {
         const timelineMoves = buildReplayTimeline(activeReplay, gameData.turn).map((entry) => entry.move);
-        const gifDataUrl = shareShowGame ? await generateReplayGifDataUrl() : undefined;
 
         const replayCommentPayload: {
           opponent: string;
           userComment: string;
           tagOpponent: boolean;
-          showGame: boolean;
           matchType: 'best' | 'worst';
           moves: MoveInput[];
-          gifDataUrl?: string;
+          score: number;
         } = {
           opponent: activeReplay.opponent,
           userComment: shareComment,
           tagOpponent: shareTagOpponent,
-          showGame: shareShowGame,
           matchType: simulationTab === 'worst' ? 'worst' : 'best',
           moves: timelineMoves,
+          score: activeReplay.score,
         };
-
-        if (gifDataUrl) {
-          replayCommentPayload.gifDataUrl = gifDataUrl;
-        }
 
         await postReplayComment(replayCommentPayload);
 
@@ -1455,7 +1386,6 @@ const Chessboard = () => {
         return;
       }
 
-      setShareShowGame(true);
       setShareTagOpponent(true);
       setShowReplayShareCard(true);
     }, [shouldShowReplayShareCard, replayShareKey, dismissedShareCardByKey]);
@@ -2059,7 +1989,7 @@ return (
       {/* Center Scores and Names */}
       <div style={{ background: theme.panelBg, color: '#000000', display: 'flex', flexDirection: 'column', borderLeft: '4px solid #000', borderRight: '4px solid #000' }}>
         <div style={{ padding: isMobileView ? '8px 10px' : '12px 20px', textAlign: 'center', fontSize: isMobileView ? '12px' : '16px', fontWeight: 900, color: '#000000', textTransform: 'uppercase', letterSpacing: isMobileView ? '0.04em' : '0.08em', borderBottom: '4px solid #000' }}>
-          {userTeamLabel}(your team) is {userTeamLeadingState}
+          {userTeamLabel}(you) is {userTeamLeadingState}
         </div>
         <div style={{ padding: isMobileView ? '8px 10px 10px' : '10px 20px 12px', alignItems: 'center' }}>
           <div style={{ textAlign: 'center', fontSize: isMobileView ? '28px' : '36px', fontWeight: 900 }}>{userTeamAverageScore.toFixed(2)}</div>
@@ -2101,8 +2031,8 @@ return (
       {/* Row Helper Component */}
       {[
         { label: 'Players', white: whiteGames, black: blackGames, accent: '#81b64c' },
-        { label: 'Illegal moves / avg', white: formatAverage(whiteStats.illegalMoves), black: formatAverage(blackStats.illegalMoves), accent: '#81b64c' },
-        { label: 'Captures / avg', white: formatAverage(whiteStats.captures), black: formatAverage(blackStats.captures), accent: '#81b64c' },
+        { label: 'Illegal moves / game', white: formatAverage(whiteStats.illegalMoves), black: formatAverage(blackStats.illegalMoves), accent: '#81b64c' },
+        { label: 'Captures / game', white: formatAverage(whiteStats.captures), black: formatAverage(blackStats.captures), accent: '#81b64c' },
       ].map((stat, i) => (
         <div key={i} style={{ 
           display: 'grid', 
@@ -2125,7 +2055,7 @@ return (
             justifyContent: 'center',
             borderLeft: '4px solid #000000',
             borderRight: '4px solid #000000',
-          }}>{stat.label}</div>
+         }}>{stat.label}</div>
           <div style={{ padding: isMobileView ? '10px 10px' : '16px 20px', fontSize: isMobileView ? '14px' : '18px', fontWeight: 900, color: '#000' }}>{stat.black}</div>
         </div>
       ))}
@@ -2494,10 +2424,11 @@ return (
           inset: 0,
           zIndex: 10003,
           display: 'flex',
-          alignItems: 'center',
+          alignItems: isMobileView ? 'flex-start' : 'center',
           justifyContent: 'center',
           background: 'rgba(0,0,0,0.35)',
-          padding: '16px',
+          padding: isMobileView ? '10px' : '16px',
+          overflowY: 'auto',
         }}
       >
         <div
@@ -2511,6 +2442,8 @@ return (
             display: 'flex',
             flexDirection: 'column',
             gap: '10px',
+            maxHeight: isMobileView ? '92vh' : 'unset',
+            overflowY: isMobileView ? 'auto' : 'visible',
           }}
         >
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -2551,14 +2484,7 @@ return (
             }}
           />
 
-          <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', fontWeight: 800 }}>
-            <input
-              type="checkbox"
-              checked={shareShowGame}
-              onChange={(e) => setShareShowGame(e.target.checked)}
-            />
-            Show the game
-          </label>
+
 
           <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', fontWeight: 800 }}>
             <input

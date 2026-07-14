@@ -224,7 +224,7 @@ export const Splash = () => {
                     background: '#FFFFFF',
                     border: '4px solid #000000',
                     borderRadius: 0,
-                    boxShadow: '8px 8px 0px 0px #000000',
+                    boxShadow: '4px 4px 0px 0px #000000',
                     fontFamily: 'system-ui, sans-serif',
                     display: 'flex',
                     flexDirection: 'column',
@@ -233,14 +233,31 @@ export const Splash = () => {
                 >
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr 1fr', alignItems: 'stretch' }}>
                     <div style={{ background: '#FFD93D', color: '#000', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '8px', gap: '4px' }}>
-                      {isWhiteLeading && <img src="/crown.png" alt="Leading side crown" style={{ width: '54px', height: '54px', objectFit: 'contain' }} />}
-                      <img src="/pieces/white_king.png" alt="White king" style={{ width: '40px', height: '40px', objectFit: 'contain' }} />
+                      <div style={{ position: 'relative', width: '54px', height: '40px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                        {isWhiteLeading && (
+                          <img
+                            src="/crown.png"
+                            alt="Leading side crown"
+                            style={{
+                              width: '54px',
+                              height: '54px',
+                              objectFit: 'contain',
+                              position: 'absolute',
+                              left: '50%',
+                              top: '-16px',
+                              transform: 'translateX(-50%)',
+                              pointerEvents: 'none',
+                            }}
+                          />
+                        )}
+                        <img src="/pieces/white_king.png" alt="White king" style={{ width: '40px', height: '40px', objectFit: 'contain', position: 'relative', zIndex: 1 }} />
+                      </div>
                       <div style={{ fontSize: '9px', fontWeight: 900, textAlign: 'center', lineHeight: 1.2, wordBreak: 'break-word' }}>{whiteGameLabel}</div>
                     </div>
 
                     <div style={{ background: '#FFFFFF', color: '#000000', display: 'flex', flexDirection: 'column', borderLeft: '4px solid #000', borderRight: '4px solid #000' }}>
                       <div style={{ padding: '8px 10px', textAlign: 'center', fontSize: '11px', fontWeight: 900, color: '#000000', textTransform: 'uppercase', letterSpacing: '0.08em', borderBottom: '4px solid #000' }}>
-                        {userTeamLabel} (your team) is {userTeamLeadingState}
+                        {userTeamLabel} (you) is {userTeamLeadingState}
                       </div>
                       <div style={{ padding: '8px 8px', alignItems: 'center' }}>
                         <div style={{ textAlign: 'center', fontSize: '28px', fontWeight: 900 }}>{userTeamAverageScore.toFixed(2)}</div>
@@ -248,8 +265,25 @@ export const Splash = () => {
                     </div>
 
                     <div style={{ background: '#C4B5FD', color: '#000', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '8px', gap: '4px' }}>
-                      {isBlackLeading && <img src="/crown.png" alt="Leading side crown" style={{ width: '54px', height: '54px', objectFit: 'contain' }} />}
-                      <img src="/pieces/black_king.png" alt="Black king" style={{ width: '40px', height: '40px', objectFit: 'contain' }} />
+                      <div style={{ position: 'relative', width: '54px', height: '40px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                        {isBlackLeading && (
+                          <img
+                            src="/crown.png"
+                            alt="Leading side crown"
+                            style={{
+                              width: '54px',
+                              height: '54px',
+                              objectFit: 'contain',
+                              position: 'absolute',
+                              left: '50%',
+                              top: '-16px',
+                              transform: 'translateX(-50%)',
+                              pointerEvents: 'none',
+                            }}
+                          />
+                        )}
+                        <img src="/pieces/black_king.png" alt="Black king" style={{ width: '40px', height: '40px', objectFit: 'contain', position: 'relative', zIndex: 1 }} />
+                      </div>
                       <div style={{ fontSize: '9px', fontWeight: 900, textAlign: 'center', lineHeight: 1.2, wordBreak: 'break-word' }}>{blackGameLabel}</div>
                     </div>
                   </div>
@@ -257,8 +291,8 @@ export const Splash = () => {
                   <div style={{ background: '#FFFDF5', color: '#000000', fontSize: '14px', borderTop: '4px solid #000' }}>
                     {[
                       { label: 'Players', white: whiteGames, black: blackGames },
-                      { label: 'Illegal moves / avg', white: formatAverage(whiteStats.illegalMoves), black: formatAverage(blackStats.illegalMoves) },
-                      { label: 'Captures / avg', white: formatAverage(whiteStats.captures), black: formatAverage(blackStats.captures) },
+                      { label: 'Illegal moves / game', white: formatAverage(whiteStats.illegalMoves), black: formatAverage(blackStats.illegalMoves) },
+                      { label: 'Captures / game', white: formatAverage(whiteStats.captures), black: formatAverage(blackStats.captures) },
                     ].map((stat, i) => (
                       <div key={i} style={{ display: 'grid', gridTemplateColumns: '1fr 1.5fr 1fr', alignItems: 'center', textAlign: 'center', borderTop: '4px solid #000' }}>
                         <div style={{ padding: '6px 8px', fontSize: '12px', fontWeight: 900, color: '#000' }}>{stat.white}</div>
@@ -308,12 +342,14 @@ export const Splash = () => {
           )}
 
           <div className="flex justify-center mt-0.5">
-            <button
-              className="w-full py-2 px-4 rounded-none bg-[#FF6B6B] border-4 border-black text-[11px] sm:text-xs font-bold text-black tracking-wide shadow-[4px_4px_0px_0px_#000] transition-all duration-100 active:translate-x-[4px] active:translate-y-[4px] active:shadow-none"
-              onClick={(e) => requestExpandedMode(e.nativeEvent, 'game')}
-            >
-              View my game board
-            </button>
+            <div className="w-full max-w-[620px]">
+              <button
+                className="w-full py-2 px-4 rounded-none bg-[#FF6B6B] border-4 border-black text-[11px] sm:text-xs font-bold text-black tracking-wide shadow-[4px_4px_0px_0px_#000] transition-all duration-100 active:translate-x-[4px] active:translate-y-[4px] active:shadow-none"
+                onClick={(e) => requestExpandedMode(e.nativeEvent, 'game')}
+              >
+                View my game board
+              </button>
+            </div>
           </div>
         </div>
       </div>

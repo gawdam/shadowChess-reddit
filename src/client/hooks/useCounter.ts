@@ -196,10 +196,9 @@ export const useCounter = () => {
     opponent: string;
     userComment: string;
     tagOpponent: boolean;
-    showGame: boolean;
     matchType: 'best' | 'worst';
     moves: MoveInput[];
-    gifDataUrl?: string;
+    score: number;
   }) => {
     const response = await fetch('/api/post-replay-comment', {
       method: 'POST',
