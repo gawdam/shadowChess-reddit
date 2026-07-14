@@ -192,6 +192,29 @@ export const useCounter = () => {
     }
   }, [postId]);
 
+  const postReplayComment = useCallback(async (input: {
+    opponent: string;
+    userComment: string;
+    tagOpponent: boolean;
+    showGame: boolean;
+    matchType: 'best' | 'worst';
+    moves: MoveInput[];
+    gifDataUrl?: string;
+  }) => {
+    const response = await fetch('/api/post-replay-comment', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(input),
+    });
+
+    const data = await response.json();
+    if (!response.ok) {
+      throw new Error((data as { message?: string }).message ?? 'Failed to post replay comment');
+    }
+
+    return data as { status: 'success'; commentId: string };
+  }, []);
+
   return {
     ...state,
     userData: state.userData, 
@@ -199,6 +222,7 @@ export const useCounter = () => {
     submitMoves,
     selectSide,
     refreshData,
+    postReplayComment,
     selectingSide,
     refreshing,
   } as const;

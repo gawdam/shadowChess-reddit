@@ -2,6 +2,7 @@ import './index.css';
 
 import React, { StrictMode, useState, useRef } from 'react';
 import { createRoot } from 'react-dom/client';
+import { GIFEncoder, applyPalette, quantize } from 'gifenc';
 import { useCounter } from './hooks/useCounter';
 import type { MatchRecord, MoveInput, StoredMove } from '../shared/api';
 import { HowToPlayDialog } from './howToPlayDialog';
@@ -289,6 +290,12 @@ const Chessboard = () => {
     // Pop-up Modal visibility state
     const [showModal, setShowModal] = useState<boolean>(false);
     const [showHowToPlay, setShowHowToPlay] = useState(false);
+    const [showReplayShareCard, setShowReplayShareCard] = useState(false);
+    const [shareComment, setShareComment] = useState('');
+    const [shareShowGame, setShareShowGame] = useState(true);
+    const [shareTagOpponent, setShareTagOpponent] = useState(true);
+    const [sharePosting, setSharePosting] = useState(false);
+    const [dismissedShareCardByKey, setDismissedShareCardByKey] = useState<Record<string, boolean>>({});
 
     // Post-Game Replay Engine States
     const [activeReplay, setActiveReplay] = useState<MatchRecord | null>(null);
@@ -913,7 +920,7 @@ const Chessboard = () => {
   const whitePlayerName = gameMeta?.white?.split(',')[0] ?? 'White';
   const blackPlayerName = gameMeta?.black?.split(',')[0] ?? 'Black';
 
-    const { gameData, userData, loading, submitMoves, submitting, selectSide, selectingSide, refreshing, playerCounts, simulationStats } = useCounter();
+    const { gameData, userData, loading, submitMoves, submitting, selectSide, selectingSide, refreshing, playerCounts, simulationStats, postReplayComment } = useCounter();
     const whiteStats = simulationStats.white;
     const blackStats = simulationStats.black;
     const pieceAssetsReady = usePieceAssetsReady();
@@ -1276,6 +1283,149 @@ const Chessboard = () => {
     const boardColumnMaxWidth = isDesktopLayout ? `${desktopBoardWidth}px` : '500px';
     const isGameClosed = Boolean(gameData?.closesAt && Date.now() >= gameData.closesAt);
     const totalPlayers = (playerCounts?.white ?? whiteStats.players ?? 0) + (playerCounts?.black ?? blackStats.players ?? 0);
+    const isUserWhiteSide = userData.userSide === 'white';
+    const isUserBlackSide = userData.userSide === 'black';
+    const userTeamLabel = isUserWhiteSide ? 'White' : 'Black';
+    const whiteGames = playerCounts?.white ?? whiteStats.players ?? 0;
+    const blackGames = playerCounts?.black ?? blackStats.players ?? 0;
+    const averageDenominator = whiteGames * blackGames;
+    const getAverageValue = (value: number) => (averageDenominator > 0 ? value / averageDenominator : 0);
+    const formatAverage = (value: number) => getAverageValue(value).toFixed(2);
+    const whiteAverageScore = getAverageValue(whiteStats.totalScore);
+    const blackAverageScore = getAverageValue(blackStats.totalScore);
+    const isWhiteLeading = whiteAverageScore > blackAverageScore;
+    const isBlackLeading = blackAverageScore > whiteAverageScore;
+    const userTeamAverageScore = isUserWhiteSide ? whiteAverageScore : blackAverageScore;
+    const userTeamLeadingState = (isUserWhiteSide && isWhiteLeading) || (isUserBlackSide && isBlackLeading) ? 'leading' : 'trailing';
+    const replayShareKey = activeReplay ? `${simulationTab}:${activeReplay.opponent}:${activeReplay.score}` : null;
+    const shouldShowReplayShareCard = Boolean(
+      isReplayMode &&
+      activeReplay &&
+      (simulationTab === 'best' || simulationTab === 'worst') &&
+      isAtReplayEnd
+    );
+
+    const dismissReplayShareCard = () => {
+      if (replayShareKey) {
+        setDismissedShareCardByKey((prev) => ({ ...prev, [replayShareKey]: true }));
+      }
+      setShowReplayShareCard(false);
+    };
+
+    const loadPieceImage = (piece: string) =>
+      new Promise<HTMLImageElement>((resolve, reject) => {
+        const img = new Image();
+        img.onload = () => resolve(img);
+        img.onerror = () => reject(new Error(`Failed to load piece image: ${piece}`));
+        img.src = `/pieces/${piece}.png`;
+      });
+
+    const generateReplayGifDataUrl = async () => {
+      if (replayPositions.length <= 1) return null;
+
+      const frameStates = replayPositions.map((position) => position.board);
+      const cell = 48;
+      const width = cell * 8;
+      const height = cell * 8;
+      const canvas = document.createElement('canvas');
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return null;
+
+      const pieceNames = Array.from(new Set(frameStates.flatMap((state) => state.filter((piece): piece is string => Boolean(piece)))));
+      const pieceImages = new Map<string, HTMLImageElement>();
+      await Promise.all(
+        pieceNames.map(async (piece) => {
+          pieceImages.set(piece, await loadPieceImage(piece));
+        })
+      );
+
+      const gif = GIFEncoder();
+      for (let frameIndex = 0; frameIndex < frameStates.length; frameIndex += 1) {
+        const boardState = frameStates[frameIndex]!;
+
+        for (let i = 0; i < 64; i += 1) {
+          const row = Math.floor(i / 8);
+          const col = i % 8;
+          const isDark = (row + col) % 2 === 1;
+          ctx.fillStyle = isDark ? theme.boardDark : theme.boardLight;
+          ctx.fillRect(col * cell, row * cell, cell, cell);
+
+          const piece = boardState[i];
+          if (piece) {
+            const pieceImage = pieceImages.get(piece);
+            if (pieceImage) {
+              const inset = 4;
+              ctx.drawImage(pieceImage, col * cell + inset, row * cell + inset, cell - inset * 2, cell - inset * 2);
+            }
+          }
+        }
+
+        const imageData = ctx.getImageData(0, 0, width, height);
+        const palette = quantize(imageData.data, 256);
+        const indexed = applyPalette(imageData.data, palette);
+        gif.writeFrame(indexed, width, height, {
+          palette,
+          delay: frameIndex === 0 ? 700 : 550,
+          repeat: 0,
+        });
+      }
+
+      gif.finish();
+      const gifBytes = Uint8Array.from(gif.bytes());
+      const gifBlob = new Blob([gifBytes.buffer], { type: 'image/gif' });
+      const dataUrl = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result ?? ''));
+        reader.onerror = () => reject(new Error('Failed to serialize GIF data URL'));
+        reader.readAsDataURL(gifBlob);
+      });
+
+      return dataUrl;
+    };
+
+    const postReplayShareComment = async () => {
+      if (!activeReplay || !gameData) return;
+
+      setSharePosting(true);
+      try {
+        const timelineMoves = buildReplayTimeline(activeReplay, gameData.turn).map((entry) => entry.move);
+        const gifDataUrl = shareShowGame ? await generateReplayGifDataUrl() : undefined;
+
+        const replayCommentPayload: {
+          opponent: string;
+          userComment: string;
+          tagOpponent: boolean;
+          showGame: boolean;
+          matchType: 'best' | 'worst';
+          moves: MoveInput[];
+          gifDataUrl?: string;
+        } = {
+          opponent: activeReplay.opponent,
+          userComment: shareComment,
+          tagOpponent: shareTagOpponent,
+          showGame: shareShowGame,
+          matchType: simulationTab === 'worst' ? 'worst' : 'best',
+          moves: timelineMoves,
+        };
+
+        if (gifDataUrl) {
+          replayCommentPayload.gifDataUrl = gifDataUrl;
+        }
+
+        await postReplayComment(replayCommentPayload);
+
+        dismissReplayShareCard();
+        setShareComment('');
+        alert('Comment posted successfully.');
+      } catch (error) {
+        console.error('Failed to post replay comment:', error);
+        alert(error instanceof Error ? error.message : 'Failed to post comment.');
+      } finally {
+        setSharePosting(false);
+      }
+    };
 
     React.useEffect(() => {
       const onResize = () => setViewportWidth(window.innerWidth);
@@ -1294,6 +1444,21 @@ const Chessboard = () => {
         setShowModal(false);
       }
     }, [showModal, submitting, refreshing, userData.hasSubmitted]);
+
+    React.useEffect(() => {
+      if (!shouldShowReplayShareCard) {
+        setShowReplayShareCard(false);
+        return;
+      }
+
+      if (!replayShareKey || dismissedShareCardByKey[replayShareKey]) {
+        return;
+      }
+
+      setShareShowGame(true);
+      setShareTagOpponent(true);
+      setShowReplayShareCard(true);
+    }, [shouldShowReplayShareCard, replayShareKey, dismissedShareCardByKey]);
 
     const autoSubmitTriggeredRef = useRef(false);
 
@@ -1802,9 +1967,6 @@ return (
 
       {isReplayMode ? (
         <>
-          <span style={{ color: theme.accent, fontWeight: 600, marginRight: '8px' }}>
-            vs u/{activeReplay?.opponent}
-          </span>
           {moves.length > 0 ? moves.map((m, idx) => (
             <span
               key={`${m.color}-${idx}-${m.notation}`}
@@ -1867,49 +2029,69 @@ return (
       
       {/* Left 'White' Team Card */}
 <div style={{ 
-  background: theme.secondary, 
+  background: theme.secondary,
   
   color: '#000', 
   display: 'flex', 
+  flexDirection: 'column',
   alignItems: 'center', 
-  justifyContent: 'center',
-  padding: '20px'
+  justifyContent: 'center', 
+  padding: '20px',
+  position: 'relative',
+  gap: '6px'
 }}>
+  {isWhiteLeading && (
+    <img
+      src="/crown.png"
+      alt="Leading side crown"
+      style={{ width: '72px', height: '72px', objectFit: 'contain', position: 'absolute', top: '-18px', left: '50%', transform: 'translateX(-50%)', pointerEvents: 'none' }}
+    />
+  )}
   <img
     src="/pieces/white_king.png"
     alt="White king"
     style={{ width: '72px', height: '72px', objectFit: 'contain' }}
   />
+  <div style={{ fontSize: isMobileView ? '9px' : '10px', fontWeight: 900, textAlign: 'center', lineHeight: 1.2, wordBreak: 'break-word' }}>{gameMeta?.white ?? 'White'}</div>
 </div>
 
 
       {/* Center Scores and Names */}
       <div style={{ background: theme.panelBg, color: '#000000', display: 'flex', flexDirection: 'column', borderLeft: '4px solid #000', borderRight: '4px solid #000' }}>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', padding: isMobileView ? '8px 10px' : '12px 20px', textAlign: 'center', fontSize: isMobileView ? '12px' : '16px', fontWeight: 900, color: '#000000', textTransform: 'uppercase', letterSpacing: isMobileView ? '0.04em' : '0.08em', borderBottom: '4px solid #000' }}>
-          <div>White</div>
-          <div>Black</div>
+        <div style={{ padding: isMobileView ? '8px 10px' : '12px 20px', textAlign: 'center', fontSize: isMobileView ? '12px' : '16px', fontWeight: 900, color: '#000000', textTransform: 'uppercase', letterSpacing: isMobileView ? '0.04em' : '0.08em', borderBottom: '4px solid #000' }}>
+          {userTeamLabel}(your team) is {userTeamLeadingState}
         </div>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', padding: isMobileView ? '8px 10px' : '10px 20px', alignItems: 'center' }}>
-          <div style={{ textAlign: 'center', fontSize: isMobileView ? '34px' : '48px', fontWeight: 900 }}>{whiteStats.totalScore}</div>
-          <div style={{ textAlign: 'center', fontSize: isMobileView ? '34px' : '48px', fontWeight: 900 }}>{blackStats.totalScore}</div>
+        <div style={{ padding: isMobileView ? '8px 10px 10px' : '10px 20px 12px', alignItems: 'center' }}>
+          <div style={{ textAlign: 'center', fontSize: isMobileView ? '28px' : '36px', fontWeight: 900 }}>{userTeamAverageScore.toFixed(2)}</div>
         </div>
       </div>
 
       {/* Right 'Black' Team Card */}
       <div style={{ 
-        background: theme.muted, 
+        background: theme.muted,
         
         color: '#000', 
         display: 'flex', 
+        flexDirection: 'column',
         alignItems: 'center', 
         justifyContent: 'center',
-        padding: '20px'
+        padding: '20px',
+        position: 'relative',
+        gap: '6px'
       }}>
+        {isBlackLeading && (
+          <img
+            src="/crown.png"
+            alt="Leading side crown"
+            style={{ width: '72px', height: '72px', objectFit: 'contain', position: 'absolute', top: '-18px', left: '50%', transform: 'translateX(-50%)', pointerEvents: 'none' }}
+          />
+        )}
         <img
           src="/pieces/black_king.png"
           alt="Black king"
           style={{ width: '72px', height: '72px', objectFit: 'contain' }}
         />
+        <div style={{ fontSize: isMobileView ? '9px' : '10px', fontWeight: 900, textAlign: 'center', lineHeight: 1.2, wordBreak: 'break-word' }}>{gameMeta?.black ?? 'Black'}</div>
       </div>
     </div>
 
@@ -1918,9 +2100,9 @@ return (
       
       {/* Row Helper Component */}
       {[
-        { label: 'Players', white: whiteStats.players, black: blackStats.players, accent: '#81b64c' },
-        { label: 'Illegal moves', white: whiteStats.illegalMoves, black: blackStats.illegalMoves, accent: '#81b64c' },
-        { label: 'Captures', white: whiteStats.captures, black: blackStats.captures, accent: '#81b64c' },
+        { label: 'Players', white: whiteGames, black: blackGames, accent: '#81b64c' },
+        { label: 'Illegal moves / avg', white: formatAverage(whiteStats.illegalMoves), black: formatAverage(blackStats.illegalMoves), accent: '#81b64c' },
+        { label: 'Captures / avg', white: formatAverage(whiteStats.captures), black: formatAverage(blackStats.captures), accent: '#81b64c' },
       ].map((stat, i) => (
         <div key={i} style={{ 
           display: 'grid', 
@@ -1929,10 +2111,10 @@ return (
           textAlign: 'center',
           borderTop: '4px solid #000'
         }}>
-          <div style={{ padding: isMobileView ? '10px 10px' : '16px 20px', fontSize: isMobileView ? '18px' : '24px', fontWeight: 900, color: '#000' }}>{stat.white}</div>
+          <div style={{ padding: isMobileView ? '10px 10px' : '16px 20px', fontSize: isMobileView ? '14px' : '18px', fontWeight: 900, color: '#000' }}>{stat.white}</div>
           <div style={{ 
             padding: isMobileView ? '8px 8px' : '12px 20px', 
-            background: stat.label === 'Players' ? theme.secondary : (stat.label === 'Illegal moves' ? theme.accent : theme.muted),
+            background: stat.label === 'Players' ? theme.secondary : (stat.label.startsWith('Illegal moves') ? theme.accent : theme.muted),
             color: '#000000',
             fontWeight: 900, 
             letterSpacing: '0.4px',
@@ -1944,7 +2126,7 @@ return (
             borderLeft: '4px solid #000000',
             borderRight: '4px solid #000000',
           }}>{stat.label}</div>
-          <div style={{ padding: isMobileView ? '10px 10px' : '16px 20px', fontSize: isMobileView ? '18px' : '24px', fontWeight: 900, color: '#000' }}>{stat.black}</div>
+          <div style={{ padding: isMobileView ? '10px 10px' : '16px 20px', fontSize: isMobileView ? '14px' : '18px', fontWeight: 900, color: '#000' }}>{stat.black}</div>
         </div>
       ))}
     </div>
@@ -1970,7 +2152,7 @@ return (
         color: '#000000',
         fontSize: isMobileView ? '26px' : '32px',
         fontWeight: 900
-      }}>{userData?.score ?? 0}</div>
+      }}>{formatAverage(userData?.score ?? 0)}</div>
     </div>
   </div>
 )}
@@ -2303,6 +2485,112 @@ return (
 
       </div>
     </div>
+    )}
+
+    {showReplayShareCard && (
+      <div
+        style={{
+          position: 'fixed',
+          inset: 0,
+          zIndex: 10003,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          background: 'rgba(0,0,0,0.35)',
+          padding: '16px',
+        }}
+      >
+        <div
+          style={{
+            width: 'min(560px, 96vw)',
+            background: '#FFFFFF',
+            border: '4px solid #000000',
+            borderRadius: 0,
+            padding: '14px',
+            boxShadow: theme.hardShadowLg,
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '10px',
+          }}
+        >
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <div style={{ fontWeight: 900, fontSize: '14px', textTransform: 'uppercase', letterSpacing: '0.08em' }}>
+              Share {simulationTab === 'worst' ? 'Worst' : 'Best'} Game
+            </div>
+            <button
+              type="button"
+              onClick={dismissReplayShareCard}
+              style={{
+                border: '3px solid #000000',
+                background: '#FFFFFF',
+                color: '#000000',
+                fontWeight: 900,
+                width: '30px',
+                height: '30px',
+                cursor: 'pointer',
+              }}
+            >
+              x
+            </button>
+          </div>
+
+          <textarea
+            value={shareComment}
+            onChange={(e) => setShareComment(e.target.value)}
+            placeholder="Write your comment..."
+            rows={4}
+            style={{
+              width: '100%',
+              border: '3px solid #000000',
+              borderRadius: 0,
+              padding: '8px',
+              resize: 'vertical',
+              fontSize: '13px',
+              fontFamily: 'inherit',
+              boxSizing: 'border-box',
+            }}
+          />
+
+          <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', fontWeight: 800 }}>
+            <input
+              type="checkbox"
+              checked={shareShowGame}
+              onChange={(e) => setShareShowGame(e.target.checked)}
+            />
+            Show the game
+          </label>
+
+          <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', fontWeight: 800 }}>
+            <input
+              type="checkbox"
+              checked={shareTagOpponent}
+              onChange={(e) => setShareTagOpponent(e.target.checked)}
+            />
+            Tag the opponent
+          </label>
+
+          <button
+            type="button"
+            onClick={postReplayShareComment}
+            disabled={sharePosting}
+            style={{
+              marginTop: '4px',
+              border: '4px solid #000000',
+              background: sharePosting ? '#CCCCCC' : theme.accent,
+              color: '#000000',
+              borderRadius: 0,
+              fontWeight: 900,
+              fontSize: '13px',
+              textTransform: 'uppercase',
+              letterSpacing: '0.06em',
+              padding: '10px 12px',
+              cursor: sharePosting ? 'not-allowed' : 'pointer',
+            }}
+          >
+            {sharePosting ? 'Posting...' : 'Post Comment'}
+          </button>
+        </div>
+      </div>
     )}
 
     {/* GHOST DRAG ELEMENT */}

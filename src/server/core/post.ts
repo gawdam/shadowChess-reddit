@@ -1,6 +1,9 @@
 import { context, reddit, redis } from '@devvit/web/server';
 import { createGameData } from './gameGenerator';
 
+const subredditGameCountKey = (subredditName: string) =>
+  `shadowchess_game_count_${subredditName.toLowerCase()}`;
+
 const firstNamePart = (value: string | undefined, fallback: string) => {
   const trimmed = (value ?? '').trim();
   if (!trimmed) return fallback;
@@ -8,8 +11,8 @@ const firstNamePart = (value: string | undefined, fallback: string) => {
   return (firstPart ?? '').trim() || fallback;
 };
 
-export const createPost = async () => {
-  const subredditName = context.subredditName;
+export const createPost = async (subredditNameOverride?: string) => {
+  const subredditName = subredditNameOverride ?? context.subredditName;
   if (!subredditName) {
     console.log('Missing subreddit context for post creation');
     throw new Error('Missing subreddit context for post creation');
@@ -20,7 +23,8 @@ export const createPost = async () => {
   const whiteName = firstNamePart(gameData.meta?.white, 'White');
   const blackName = firstNamePart(gameData.meta?.black, 'Black');
   const eventName = (gameData.meta?.event ?? '').trim() || 'Unknown Event';
-  const postTitle = `${whiteName} vs ${blackName}: ${eventName}`;
+  const gameNumber = await redis.incrBy(subredditGameCountKey(subredditName), 1);
+  const postTitle = `[Game #${gameNumber}] ${whiteName} vs ${blackName}: ${eventName}`;
 
   const post = await reddit.submitCustomPost({
     subredditName,

@@ -41,6 +41,11 @@
   "triggers": {
     "onAppInstall": "/internal/triggers/on-app-install"
   },
+  "scheduler": {
+    "tasks": {
+      "scheduledGameRelease": "/internal/triggers/scheduled-release"
+    }
+  },
   "scripts": {
     "dev": "vite build --watch",
     "build": "vite build"

@@ -114,6 +114,22 @@ export const Splash = () => {
   : `${remainingMinutes} min${remainingMinutes === 1 ? '' : 's'}`;
   const whiteStats = simulationStats.white;
   const blackStats = simulationStats.black;
+  const whiteGameLabel = (gameData?.meta?.white)?.split(',')[0]?.trim() ?? 'White';
+  const blackGameLabel = (gameData?.meta?.black)?.split(',')[0]?.trim() ?? 'Black';
+  const isUserWhiteSide = userData.userSide === 'white';
+  const isUserBlackSide = userData.userSide === 'black';
+  const userTeamLabel = isUserWhiteSide ? 'White' : 'Black';
+  const whiteGames = playerCounts?.white ?? whiteStats.players ?? 0;
+  const blackGames = playerCounts?.black ?? blackStats.players ?? 0;
+  const averageDenominator = whiteGames * blackGames;
+  const getAverageValue = (value: number) => (averageDenominator > 0 ? value / averageDenominator : 0);
+  const formatAverage = (value: number) => getAverageValue(value).toFixed(2);
+  const whiteAverageScore = getAverageValue(whiteStats.totalScore);
+  const blackAverageScore = getAverageValue(blackStats.totalScore);
+  const isWhiteLeading = whiteAverageScore > blackAverageScore;
+  const isBlackLeading = blackAverageScore > whiteAverageScore;
+  const userTeamAverageScore = isUserWhiteSide ? whiteAverageScore : blackAverageScore;
+  const userTeamLeadingState = (isUserWhiteSide && isWhiteLeading) || (isUserBlackSide && isBlackLeading) ? 'leading' : 'trailing';
 
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), 30_000);
@@ -144,7 +160,7 @@ export const Splash = () => {
               <span className="text-[9px] font-bold text-black truncate w-full text-center mb-0.5">
                 u/{entry.username}
               </span>
-              <span className="text-[10px] font-black text-black mb-0.5">{entry.score}</span>
+              <span className="text-[10px] font-black text-black mb-0.5">{formatAverage(entry.score)}</span>
               <div className={`w-full ${config!.height} ${config!.bg} border-2 border-black rounded-none flex flex-col items-center justify-center shadow-[1px_1px_0px_0px_#000]`}>
                 <span className="text-[8px] font-black text-black">
                   {config!.place}
@@ -216,38 +232,40 @@ export const Splash = () => {
                   }}
                 >
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr 1fr', alignItems: 'stretch' }}>
-                    <div style={{ background: '#FFD93D', color: '#000', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '8px' }}>
+                    <div style={{ background: '#FFD93D', color: '#000', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '8px', gap: '4px' }}>
+                      {isWhiteLeading && <img src="/crown.png" alt="Leading side crown" style={{ width: '54px', height: '54px', objectFit: 'contain' }} />}
                       <img src="/pieces/white_king.png" alt="White king" style={{ width: '40px', height: '40px', objectFit: 'contain' }} />
+                      <div style={{ fontSize: '9px', fontWeight: 900, textAlign: 'center', lineHeight: 1.2, wordBreak: 'break-word' }}>{whiteGameLabel}</div>
                     </div>
 
                     <div style={{ background: '#FFFFFF', color: '#000000', display: 'flex', flexDirection: 'column', borderLeft: '4px solid #000', borderRight: '4px solid #000' }}>
-                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', padding: '6px 10px', textAlign: 'center', fontSize: '11px', fontWeight: 900, color: '#000000', textTransform: 'uppercase', letterSpacing: '0.08em', borderBottom: '4px solid #000' }}>
-                        <div>White</div>
-                        <div>Black</div>
+                      <div style={{ padding: '8px 10px', textAlign: 'center', fontSize: '11px', fontWeight: 900, color: '#000000', textTransform: 'uppercase', letterSpacing: '0.08em', borderBottom: '4px solid #000' }}>
+                        {userTeamLabel} (your team) is {userTeamLeadingState}
                       </div>
-                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', padding: '4px 8px', alignItems: 'center' }}>
-                        <div style={{ textAlign: 'center', fontSize: '42px', fontWeight: 900 }}>{whiteStats.totalScore}</div>
-                        <div style={{ textAlign: 'center', fontSize: '42px', fontWeight: 900 }}>{blackStats.totalScore}</div>
+                      <div style={{ padding: '8px 8px', alignItems: 'center' }}>
+                        <div style={{ textAlign: 'center', fontSize: '28px', fontWeight: 900 }}>{userTeamAverageScore.toFixed(2)}</div>
                       </div>
                     </div>
 
-                    <div style={{ background: '#C4B5FD', color: '#000', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '8px' }}>
+                    <div style={{ background: '#C4B5FD', color: '#000', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '8px', gap: '4px' }}>
+                      {isBlackLeading && <img src="/crown.png" alt="Leading side crown" style={{ width: '54px', height: '54px', objectFit: 'contain' }} />}
                       <img src="/pieces/black_king.png" alt="Black king" style={{ width: '40px', height: '40px', objectFit: 'contain' }} />
+                      <div style={{ fontSize: '9px', fontWeight: 900, textAlign: 'center', lineHeight: 1.2, wordBreak: 'break-word' }}>{blackGameLabel}</div>
                     </div>
                   </div>
 
                   <div style={{ background: '#FFFDF5', color: '#000000', fontSize: '14px', borderTop: '4px solid #000' }}>
                     {[
-                      { label: 'Players', white: playerCounts?.white ?? 0, black: playerCounts?.black ?? 0 },
-                      { label: 'Illegal moves', white: whiteStats.illegalMoves, black: blackStats.illegalMoves },
-                      { label: 'Captures', white: whiteStats.captures, black: blackStats.captures },
+                      { label: 'Players', white: whiteGames, black: blackGames },
+                      { label: 'Illegal moves / avg', white: formatAverage(whiteStats.illegalMoves), black: formatAverage(blackStats.illegalMoves) },
+                      { label: 'Captures / avg', white: formatAverage(whiteStats.captures), black: formatAverage(blackStats.captures) },
                     ].map((stat, i) => (
                       <div key={i} style={{ display: 'grid', gridTemplateColumns: '1fr 1.5fr 1fr', alignItems: 'center', textAlign: 'center', borderTop: '4px solid #000' }}>
-                        <div style={{ padding: '6px 8px', fontSize: '14px', fontWeight: 900, color: '#000' }}>{stat.white}</div>
+                        <div style={{ padding: '6px 8px', fontSize: '12px', fontWeight: 900, color: '#000' }}>{stat.white}</div>
                         <div
                           style={{
                             padding: '6px 8px',
-                            background: stat.label === 'Players' ? '#FFD93D' : (stat.label === 'Illegal moves' ? '#FF6B6B' : '#C4B5FD'),
+                            background: stat.label === 'Players' ? '#FFD93D' : (stat.label.startsWith('Illegal moves') ? '#FF6B6B' : '#C4B5FD'),
                             color: '#000000',
                             fontWeight: 900,
                             letterSpacing: '0.4px',
@@ -262,7 +280,7 @@ export const Splash = () => {
                         >
                           {stat.label}
                         </div>
-                        <div style={{ padding: '6px 8px', fontSize: '14px', fontWeight: 900, color: '#000' }}>{stat.black}</div>
+                        <div style={{ padding: '6px 8px', fontSize: '12px', fontWeight: 900, color: '#000' }}>{stat.black}</div>
                       </div>
                     ))}
                   </div>
@@ -271,7 +289,7 @@ export const Splash = () => {
                     <div style={{ color: '#000000', fontSize: '11px', fontWeight: 900, textTransform: 'uppercase', letterSpacing: '0.2em', marginBottom: '4px' }}>
                       Your Score
                     </div>
-                    <div style={{ color: '#000000', fontSize: '28px', fontWeight: 900 }}>{userData.score ?? 0}</div>
+                    <div style={{ color: '#000000', fontSize: '22px', fontWeight: 900 }}>{formatAverage(userData.score ?? 0)}</div>
                   </div>
                 </div>
               </div>
