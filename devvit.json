@@ -43,7 +43,10 @@
   },
   "scheduler": {
     "tasks": {
-      "scheduledGameRelease": "/internal/triggers/scheduled-release"
+      "daily-post": {
+        "endpoint": "/internal/scheduler/daily-post",
+        "cron": "0 0 * * *"
+      }
     }
   },
   "scripts": {

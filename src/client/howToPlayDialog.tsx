@@ -48,12 +48,24 @@ export const HowToPlayDialog = ({ open, onClose }: HowToPlayDialogProps) => {
   ], []);
 
   const [index, setIndex] = useState(0);
+  const [isMobile, setIsMobile] = useState(false);
 
   useEffect(() => {
     if (open) {
       setIndex(0);
     }
   }, [open]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    const mediaQuery = window.matchMedia('(max-width: 640px)');
+    const syncIsMobile = () => setIsMobile(mediaQuery.matches);
+
+    syncIsMobile();
+    mediaQuery.addEventListener('change', syncIsMobile);
+    return () => mediaQuery.removeEventListener('change', syncIsMobile);
+  }, []);
 
   if (!open) return null;
 
@@ -84,12 +96,12 @@ export const HowToPlayDialog = ({ open, onClose }: HowToPlayDialogProps) => {
           background: '#FFFDF5',
           border: '4px solid #000000',
           borderRadius: 0,
-          padding: '14px',
+          padding: isMobile ? '10px' : '14px',
           color: '#000000',
         }}
       >
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px', marginBottom: '10px' }}>
-          <div style={{ fontSize: '16px', fontWeight: 900, letterSpacing: '0.08em', textTransform: 'uppercase' }}>How To Play</div>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: isMobile ? '6px' : '8px', marginBottom: isMobile ? '8px' : '10px' }}>
+          <div style={{ fontSize: isMobile ? '14px' : '16px', fontWeight: 900, letterSpacing: '0.08em', textTransform: 'uppercase' }}>How To Play</div>
           <button
             type="button"
             onClick={onClose}
@@ -97,7 +109,7 @@ export const HowToPlayDialog = ({ open, onClose }: HowToPlayDialogProps) => {
               border: '3px solid #000000',
               background: '#FF6B6B',
               color: '#000000',
-              padding: '4px 10px',
+              padding: isMobile ? '3px 8px' : '4px 10px',
               fontWeight: 900,
               cursor: 'pointer',
               borderRadius: 0,
@@ -107,33 +119,33 @@ export const HowToPlayDialog = ({ open, onClose }: HowToPlayDialogProps) => {
           </button>
         </div>
 
-        <div style={{ border: '4px solid #000000', background: '#FFFFFF', padding: '12px', minHeight: '220px' }}>
-          <div style={{ fontSize: '11px', fontWeight: 900, textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: '8px' }}>
+        <div style={{ border: '4px solid #000000', background: '#FFFFFF', padding: isMobile ? '10px' : '12px', minHeight: isMobile ? '180px' : '220px' }}>
+          <div style={{ fontSize: isMobile ? '10px' : '11px', fontWeight: 900, textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: isMobile ? '6px' : '8px' }}>
             Carousel {index + 1} / {slides.length}
           </div>
-          <div style={{ fontSize: '20px', fontWeight: 900, marginBottom: '8px' }}>{slide.title}</div>
-          <div style={{ fontSize: '14px', lineHeight: 1.5 }}>{slide.body}</div>
+          <div style={{ fontSize: isMobile ? '17px' : '20px', fontWeight: 900, marginBottom: isMobile ? '6px' : '8px' }}>{slide.title}</div>
+          <div style={{ fontSize: isMobile ? '12px' : '14px', lineHeight: isMobile ? 1.4 : 1.5 }}>{slide.body}</div>
 
           {index === 2 && (
-            <div style={{ marginTop: '12px', border: '3px solid #000000' }}>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', background: '#FFD93D', borderBottom: '3px solid #000' }}>
-                <div style={{ padding: '6px 8px', fontSize: '12px', fontWeight: 900, textTransform: 'uppercase', textAlign: 'center' }}>Piece</div>
-                <div style={{ padding: '6px 8px', fontSize: '12px', fontWeight: 900, textTransform: 'uppercase', textAlign: 'center' }}>Score</div>
+            <div style={{ marginTop: isMobile ? '8px' : '12px', border: isMobile ? '2px solid #000000' : '3px solid #000000' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', background: '#FFD93D', borderBottom: isMobile ? '2px solid #000' : '3px solid #000' }}>
+                <div style={{ padding: isMobile ? '4px 6px' : '6px 8px', fontSize: isMobile ? '10px' : '12px', fontWeight: 900, textTransform: 'uppercase', textAlign: 'center' }}>Piece</div>
+                <div style={{ padding: isMobile ? '4px 6px' : '6px 8px', fontSize: isMobile ? '10px' : '12px', fontWeight: 900, textTransform: 'uppercase', textAlign: 'center' }}>Score</div>
               </div>
               {pieceScoreRows.map((row) => (
-                <div key={row.piece} style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', borderTop: '3px solid #000000' }}>
-                  <div style={{ padding: '6px 8px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
-                    <img src={`/pieces/white_${row.piece}.png`} alt={row.label} style={{ width: '20px', height: '20px', objectFit: 'contain' }} />
-                    <span style={{ fontWeight: 800 }}>{row.label}</span>
+                <div key={row.piece} style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', borderTop: isMobile ? '2px solid #000000' : '3px solid #000000' }}>
+                  <div style={{ padding: isMobile ? '4px 6px' : '6px 8px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: isMobile ? '6px' : '8px' }}>
+                    <img src={`/pieces/white_${row.piece}.png`} alt={row.label} style={{ width: isMobile ? '16px' : '20px', height: isMobile ? '16px' : '20px', objectFit: 'contain' }} />
+                    <span style={{ fontWeight: 800, fontSize: isMobile ? '12px' : '14px' }}>{row.label}</span>
                   </div>
-                  <div style={{ padding: '6px 8px', textAlign: 'center', fontWeight: 900 }}>{row.score}</div>
+                  <div style={{ padding: isMobile ? '4px 6px' : '6px 8px', textAlign: 'center', fontWeight: 900, fontSize: isMobile ? '12px' : '14px' }}>{row.score}</div>
                 </div>
               ))}
             </div>
           )}
         </div>
 
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: '10px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: isMobile ? '8px' : '10px' }}>
           <button
             type="button"
             onClick={onPrev}
@@ -141,7 +153,7 @@ export const HowToPlayDialog = ({ open, onClose }: HowToPlayDialogProps) => {
               border: '3px solid #000000',
               background: '#FFFFFF',
               color: '#000000',
-              padding: '6px 10px',
+              padding: isMobile ? '5px 8px' : '6px 10px',
               fontWeight: 900,
               cursor: 'pointer',
               borderRadius: 0,
@@ -177,7 +189,7 @@ export const HowToPlayDialog = ({ open, onClose }: HowToPlayDialogProps) => {
               border: '3px solid #000000',
               background: '#FFD93D',
               color: '#000000',
-              padding: '6px 10px',
+              padding: isMobile ? '5px 8px' : '6px 10px',
               fontWeight: 900,
               cursor: 'pointer',
               borderRadius: 0,

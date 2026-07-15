@@ -38,6 +38,8 @@ type OrderedMove = {
   move?: MoveInput;
 };
 
+type StoredPromotion = StoredMove['promotion'];
+
 const pieceValues: Record<PieceType, number> = {
   p: 1,
   n: 3,
@@ -176,6 +178,101 @@ const parseMove = (move: string): ParsedMove | null => {
 const rowOf = (index: number) => Math.floor(index / 8);
 const colOf = (index: number) => index % 8;
 
+const promotionMap: Record<NonNullable<StoredPromotion>, PieceType> = {
+  knight: 'n',
+  bishop: 'b',
+  rook: 'r',
+  queen: 'q',
+};
+
+const toPieceTypePromotion = (promotion?: StoredPromotion): PieceType | undefined =>
+  promotion ? promotionMap[promotion] : undefined;
+
+const isPathClear = (board: Board, from: number, to: number) => {
+  const fromRow = rowOf(from);
+  const fromCol = colOf(from);
+  const toRow = rowOf(to);
+  const toCol = colOf(to);
+  const rowStep = Math.sign(toRow - fromRow);
+  const colStep = Math.sign(toCol - fromCol);
+
+  let currentRow = fromRow + rowStep;
+  let currentCol = fromCol + colStep;
+
+  while (currentRow !== toRow || currentCol !== toCol) {
+    const idx = boardIndex(currentRow, currentCol);
+    if (board[idx]) return false;
+    currentRow += rowStep;
+    currentCol += colStep;
+  }
+
+  return true;
+};
+
+const canPieceMove = (board: Board, piece: Piece, from: number, to: number) => {
+  if (from === to) return false;
+
+  const fromRow = rowOf(from);
+  const fromCol = colOf(from);
+  const toRow = rowOf(to);
+  const toCol = colOf(to);
+  const rowDelta = toRow - fromRow;
+  const colDelta = toCol - fromCol;
+  const absRowDelta = Math.abs(rowDelta);
+  const absColDelta = Math.abs(colDelta);
+  const targetPiece = board[to] ?? null;
+
+  if (targetPiece && targetPiece.color === piece.color) {
+    return false;
+  }
+
+  if (piece.type === 'n') {
+    return (absRowDelta === 2 && absColDelta === 1) || (absRowDelta === 1 && absColDelta === 2);
+  }
+
+  if (piece.type === 'k') {
+    return absRowDelta <= 1 && absColDelta <= 1;
+  }
+
+  if (piece.type === 'r') {
+    if (!(rowDelta === 0 || colDelta === 0)) return false;
+    return isPathClear(board, from, to);
+  }
+
+  if (piece.type === 'b') {
+    if (absRowDelta !== absColDelta) return false;
+    return isPathClear(board, from, to);
+  }
+
+  if (piece.type === 'q') {
+    const isLine = rowDelta === 0 || colDelta === 0;
+    const isDiagonal = absRowDelta === absColDelta;
+    if (!isLine && !isDiagonal) return false;
+    return isPathClear(board, from, to);
+  }
+
+  const direction = piece.color === 'w' ? -1 : 1;
+  const startRow = piece.color === 'w' ? 6 : 1;
+  const oneStep = rowDelta === direction && colDelta === 0;
+  const twoStep = rowDelta === direction * 2 && colDelta === 0 && fromRow === startRow;
+  const diagonalCapture = rowDelta === direction && absColDelta === 1;
+
+  if (oneStep) {
+    return targetPiece === null;
+  }
+
+  if (twoStep) {
+    const intermediate = boardIndex(fromRow + direction, fromCol);
+    return board[intermediate] === null && targetPiece === null;
+  }
+
+  if (diagonalCapture) {
+    return targetPiece !== null && targetPiece.color !== piece.color;
+  }
+
+  return false;
+};
+
 const isReachable = (piece: Piece, from: number, to: number) => {
   if (from === to) return false;
 
@@ -230,7 +327,7 @@ const inferMoveSource = (board: Board, color: PieceColor, move: ParsedMove) => {
       continue;
     }
 
-    if (isReachable(piece, index, move.to)) {
+    if (isReachable(piece, index, move.to) && canPieceMove(board, piece, index, move.to)) {
       return index;
     }
   }
@@ -261,6 +358,12 @@ const applyCastle = (board: Board, color: PieceColor, side: 'king' | 'queen'): A
 };
 
 const applyStoredMove = (board: Board, color: PieceColor, move: StoredMove): AppliedMove | null => {
+  const parsedMove = parseMove(move.notation);
+
+  if (parsedMove?.castleSide) {
+    return applyCastle(board, color, parsedMove.castleSide);
+  }
+
   if (
     move.pieceFrom < 0 ||
     move.pieceFrom > 63 ||
@@ -276,10 +379,27 @@ const applyStoredMove = (board: Board, color: PieceColor, move: StoredMove): App
     return null;
   }
 
-  const parsedMove = parseMove(move.notation);
+  if (!canPieceMove(board, movingPiece, move.pieceFrom, move.pieceTo)) {
+    return null;
+  }
+
+  const requestedPromotion = toPieceTypePromotion(move.promotion);
+  if (requestedPromotion && movingPiece.type !== 'p') {
+    return null;
+  }
+
+  const destinationRow = rowOf(move.pieceTo);
+  const reachesPromotionRank = movingPiece.type === 'p' && (destinationRow === 0 || destinationRow === 7);
+  if (requestedPromotion && !reachesPromotionRank) {
+    return null;
+  }
+  if (reachesPromotionRank && !requestedPromotion) {
+    return null;
+  }
+
   const captured = board[move.pieceTo] ?? null;
-  board[move.pieceTo] = parsedMove?.promotion && isPieceType(parsedMove.promotion)
-    ? { color, type: parsedMove.promotion }
+  board[move.pieceTo] = requestedPromotion
+    ? { color, type: requestedPromotion }
     : movingPiece;
   board[move.pieceFrom] = null;
 
@@ -310,6 +430,10 @@ const applyMove = (board: Board, color: PieceColor, moveInput: MoveInput): Appli
 
   const movingPiece = board[from];
   if (!movingPiece) {
+    return null;
+  }
+
+  if (!canPieceMove(board, movingPiece, from, move.to)) {
     return null;
   }
 

@@ -111,6 +111,108 @@ const getSimulationStats = async (postId: string, playerCounts: { white: number;
   return normalized;
 };
 
+const flairAppliedKeyForGame = (postId: string) =>
+  `game_${postId}_team_flair_applied`;
+
+const userWinsKey = (subredditName: string, username: string) =>
+  `shadowchess_flair_${subredditName.toLowerCase()}_${username}_wins`;
+
+const userLossesKey = (subredditName: string, username: string) =>
+  `shadowchess_flair_${subredditName.toLowerCase()}_${username}_losses`;
+
+const getSubmittedPlayersForSide = async (postId: string, side: 'white' | 'black') => {
+  const rosterKey = `game_${postId}_${side}_players`;
+  const rosterData = await redis.get(rosterKey);
+  const roster: string[] = rosterData ? JSON.parse(rosterData) : [];
+
+  const submittedFlags = await Promise.all(
+    roster.map((username) => redis.get(`game_${postId}_${username}_has_submitted`))
+  );
+
+  return roster.filter((_, index) => submittedFlags[index] === 'true');
+};
+
+const applyTeamResultFlairsIfNeeded = async ({
+  postId,
+  subredditName,
+  gameData,
+  simulationStats,
+}: {
+  postId: string;
+  subredditName: string | null | undefined;
+  gameData: GameData | null;
+  simulationStats: SimulationStats;
+}) => {
+  if (!subredditName || !isGameClosed(gameData)) return;
+
+  const flairAppliedKey = flairAppliedKeyForGame(postId);
+  const alreadyApplied = await redis.get(flairAppliedKey);
+  if (alreadyApplied === 'true') return;
+
+  const [whitePlayers, blackPlayers] = await Promise.all([
+    getSubmittedPlayersForSide(postId, 'white'),
+    getSubmittedPlayersForSide(postId, 'black'),
+  ]);
+
+  const whiteScore = Number(simulationStats.white.totalScore ?? 0);
+  const blackScore = Number(simulationStats.black.totalScore ?? 0);
+
+  let winners: string[] = [];
+  let losers: string[] = [];
+
+  if (whiteScore > blackScore) {
+    winners = whitePlayers;
+    losers = blackPlayers;
+  } else if (blackScore > whiteScore) {
+    winners = blackPlayers;
+    losers = whitePlayers;
+  } else {
+    await redis.set(flairAppliedKey, 'true');
+    return;
+  }
+
+  const allPlayers = Array.from(new Set([...winners, ...losers]));
+  if (allPlayers.length === 0) {
+    await redis.set(flairAppliedKey, 'true');
+    return;
+  }
+
+  const winnerSet = new Set(winners);
+  const flairBatch: Array<{ username: string; text: string }> = [];
+
+  for (const username of allPlayers) {
+    const [winsRaw, lossesRaw] = await Promise.all([
+      redis.get(userWinsKey(subredditName, username)),
+      redis.get(userLossesKey(subredditName, username)),
+    ]);
+
+    let wins = Number(winsRaw ?? 0);
+    let losses = Number(lossesRaw ?? 0);
+
+    if (winnerSet.has(username)) {
+      wins += 1;
+    } else {
+      losses += 1;
+    }
+
+    await Promise.all([
+      redis.set(userWinsKey(subredditName, username), String(wins)),
+      redis.set(userLossesKey(subredditName, username), String(losses)),
+    ]);
+
+    flairBatch.push({
+      username,
+      text: `Wins: ${wins} | Losses: ${losses}`,
+    });
+  }
+
+  if (flairBatch.length > 0) {
+    await reddit.setUserFlairBatch(subredditName, flairBatch);
+  }
+
+  await redis.set(flairAppliedKey, 'true');
+};
+
 const getLeaderboardEntries = async (postId: string, side: 'white' | 'black'): Promise<ScoreboardEntry[]> => {
   const rosterKey = `game_${postId}_${side}_players`;
   const rosterData = await redis.get(rosterKey);
@@ -182,6 +284,17 @@ api.get('/init', async (c) => {
     const simulationStats = await getSimulationStats(postId, playerCounts);
     const leaderboards = await getLeaderboards(postId);
     await redis.set(`game_${postId}_fen`, gameData?.fen!); // Ensure the side is stored even if null
+
+    try {
+      await applyTeamResultFlairsIfNeeded({
+        postId,
+        subredditName: context.subredditName,
+        gameData,
+        simulationStats,
+      });
+    } catch (error) {
+      console.error('Failed to apply team result flairs during init:', error);
+    }
 
     return c.json<InitResponse>({
       type: 'init',
@@ -497,6 +610,17 @@ api.post('/update-scores', async (c) => {
 
     // Flag the user as scored/fully processed
     await redis.set(`game_${postId}_${username}_has_submitted`, 'true');
+
+    try {
+      await applyTeamResultFlairsIfNeeded({
+        postId,
+        subredditName: context.subredditName,
+        gameData,
+        simulationStats,
+      });
+    } catch (error) {
+      console.error('Failed to apply team result flairs during score update:', error);
+    }
 
     return c.json({
       status: 'success',

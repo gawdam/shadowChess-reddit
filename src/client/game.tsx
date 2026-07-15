@@ -1427,6 +1427,8 @@ const Chessboard = () => {
     const showInitialLoader = loading && !userData.userSide;
     const showBoardLoadingOverlay = Boolean(userData.userSide) && (selectingSide || loading || !pieceAssetsReady);
     const showScoreboardLoader = showModal || submitting || refreshing;
+    const moveProgressLabel = `${Math.min(moves.length, 5)}/5`;
+    const showMoveProgressIndicator = !userData.hasSubmitted;
 
     const getReplayCaptureForSide = (side: PieceColor) => {
       if (!currentReplayPosition) return [];
@@ -1707,6 +1709,29 @@ return (
         ?
       </button>
     </div>
+
+    {showMoveProgressIndicator && (
+      <div
+        style={{
+          width: isMobileView ? '56px' : '64px',
+          height: isMobileView ? '56px' : '64px',
+          borderRadius: '999px',
+          border: '4px solid #000000',
+          background: '#FFFFFF',
+          color: '#000000',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          fontWeight: 900,
+          fontSize: isMobileView ? '18px' : '20px',
+          lineHeight: 1,
+          letterSpacing: '0.02em',
+        }}
+        aria-label={`Move progress ${moveProgressLabel}`}
+      >
+        {moveProgressLabel}
+      </div>
+    )}
 
     {/* ================= SUCCESS SCORE POP-UP OVERLAY ================= */}
     {showScoreboardLoader && (
